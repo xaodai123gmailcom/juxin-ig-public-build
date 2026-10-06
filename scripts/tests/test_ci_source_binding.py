@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,7 +34,7 @@ def encoded(value):
 class RealGitBindingTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack(); self.addCleanup(self.stack.close)
-        self.directory = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix='ci-flat-source-中文-')))
+        self.directory = Path(self.stack.enter_context(tempfile.TemporaryDirectory(prefix='ci-flat-source-中文 space%-')))
         self.local = self.directory / 'outside'; self.local.mkdir()
         self.root = self.directory / 'flat'; self.root.mkdir()
         env = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
@@ -154,7 +155,7 @@ class RealGitBindingTests(unittest.TestCase):
         helper = self.root / '.git/filter_fixture.py'
         helper.write_text('import sys\ndata=sys.stdin.buffer.read()\n'
             'data=data.replace(b"FILTERED",b"repaired") if sys.argv[1]=="clean" else data.replace(b"repaired",b"FILTERED")\n'
-            'sys.stdout.buffer.write(data)\n')
+            'sys.stdout.buffer.write(data)\n', encoding='utf-8')
         command = '"' + sys.executable + '" "' + str(helper) + '" '
         self.git('config', 'filter.fixture.clean', command + 'clean')
         self.git('config', 'filter.fixture.smudge', command + 'smudge')
@@ -170,7 +171,7 @@ class RealGitBindingTests(unittest.TestCase):
         helper = self.root / '.git/sentinel_helper.py'
         helper.write_text('from pathlib import Path\nimport sys\n'
             + 'Path(' + repr(str(sentinel)) + ').write_text("executed")\n'
-            + 'sys.stdout.buffer.write(sys.stdin.buffer.read() if len(sys.argv)>1 and sys.argv[1]=="filter" else b"\\0")\n')
+            + 'sys.stdout.buffer.write(sys.stdin.buffer.read() if len(sys.argv)>1 and sys.argv[1]=="filter" else b"\\0")\n', encoding='utf-8')
         command = '"' + sys.executable + '" "' + str(helper) + '" '
         self.git('config', 'core.fsmonitor', command + 'fsmonitor')
         self.git('config', 'filter.audit.clean', command + 'filter')
@@ -227,19 +228,79 @@ class RealGitBindingTests(unittest.TestCase):
         self.reject('executable mode differs')
         target.chmod(0o644); ci.verify_ci_source_binding(self.root)
 
-    def test_missing_promisor_tree_cannot_execute_configured_transport(self):
+    def fixture_backend_tree(self):
+        # Fault injection may touch only this test's freshly committed tree.
+        self.assertEqual(self.directory / 'flat', self.root)
         tree = self.git('rev-parse', 'HEAD:backend')
+        self.assertRegex(tree, r'\A[a-f0-9]{40}\Z')
+        self.assertEqual('tree', self.git('cat-file', '-t', tree))
+        objects = self.root / '.git/objects'
+        for directory in (self.root, self.root / '.git', objects, objects / tree[:2]):
+            safe._inspect(directory, directory=True)
+        target = objects / tree[:2] / tree[2:]
+        safe._inspect(target)
+        return target
+
+    def remove_fixture_backend_tree(self):
+        target = self.fixture_backend_tree()
+        # Git loose objects can be read-only. Windows requires clearing that
+        # attribute before unlink; do not change any other fixture path/mode.
+        target.chmod(stat.S_IMODE(target.lstat().st_mode) | stat.S_IWRITE)
+        target.unlink()
+        self.assertFalse(os.path.lexists(target))
+
+    def assert_missing_promisor_tree_cannot_execute_configured_transport(self):
         sentinel = self.root / '.git/TRANSPORT_EXECUTED'
-        helper = self.root / '.git/transport_helper.py'
-        helper.write_text('from pathlib import Path\nPath(' + repr(str(sentinel)) + ').write_text("executed")\n')
+        helper = self.root / '.git/transport 中文 100% helper.py'
+        argument = r'C:\Program Files\工具 100%\fixture'
+        helper.write_text('from pathlib import Path\nimport json, sys\n'
+            + 'Path(' + repr(str(sentinel)) + ').write_text(json.dumps(sys.argv[1:]), encoding="utf-8")\n'
+            + 'sys.stdout.buffer.write(b"0000")\n', encoding='utf-8')
+        # remote-ext parses its own arguments, not shell quoting: "% " is a
+        # literal space and "%%" is a percent; backslashes remain literal.
+        url = 'ext::' + ' '.join(value.replace('%', '%%').replace(' ', '% ')
+            for value in (sys.executable, str(helper), argument))
         self.git('config', 'extensions.partialClone', 'audit')
         self.git('config', 'remote.audit.promisor', 'true')
-        self.git('config', 'remote.audit.url', 'ext::' + sys.executable + ' ' + str(helper))
+        self.git('config', 'remote.audit.url', url)
         self.git('config', 'protocol.allow', 'always')
         self.git('config', 'protocol.ext.allow', 'always')
-        (self.root / '.git/objects' / tree[:2] / tree[2:]).unlink()
+        # Positive control: the exact configured helper must run through Git.
+        # It only writes this sentinel and advertises no refs; no network or
+        # repository fetch is involved, and every other protocol is disabled.
+        environment = dict(os.environ, GIT_ALLOW_PROTOCOL='ext', GIT_NO_LAZY_FETCH='1',
+            GIT_TERMINAL_PROMPT='0')
+        result = subprocess.run(['git', '-C', str(self.root), '-c', 'protocol.allow=never',
+            '-c', 'protocol.ext.allow=always', 'ls-remote', 'audit'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=environment, check=False, timeout=30)
+        self.assertEqual(0, result.returncode, result.stderr.decode('utf-8', errors='replace'))
+        self.assertEqual([argument], json.loads(sentinel.read_text(encoding='utf-8')))
+        sentinel.unlink()
+        self.remove_fixture_backend_tree()
         self.reject('Git source inspection failed')
         self.assertFalse(sentinel.exists(), 'Missing object triggered a configured transport')
+
+    def test_missing_promisor_tree_cannot_execute_configured_transport(self):
+        self.assert_missing_promisor_tree_cannot_execute_configured_transport()
+
+    def test_read_only_tree_fault_injection_reaches_transport_guard(self):
+        target = self.fixture_backend_tree()
+        target.chmod(stat.S_IREAD)
+        original_unlink, original_chmod = Path.unlink, Path.chmod
+        changes = []
+        def windows_unlink(path, *args, **kwargs):
+            if path == target and not path.lstat().st_mode & stat.S_IWRITE:
+                raise PermissionError('Windows refuses deletion of a read-only file')
+            return original_unlink(path, *args, **kwargs)
+        def record_chmod(path, mode, *args, **kwargs):
+            changes.append(path)
+            return original_chmod(path, mode, *args, **kwargs)
+        with patch.object(Path, 'unlink', windows_unlink), patch.object(Path, 'chmod', record_chmod):
+            with self.assertRaisesRegex(PermissionError, 'read-only'):
+                target.unlink()
+            self.assert_missing_promisor_tree_cannot_execute_configured_transport()
+        self.assertEqual([target], changes)
 
     def test_every_git_subprocess_uses_internal_read_only_controls(self):
         original = ci.subprocess.run

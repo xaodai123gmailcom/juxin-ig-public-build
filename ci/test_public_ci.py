@@ -56,6 +56,26 @@ class PublicContracts(unittest.TestCase):
         self.assertTrue(all('*' not in p and not p.endswith(('.exe','.zip','.log','.png')) for p in paths))
         self.assertNotIn('installer-output/',upload)
 
+    def test_real_git_source_binding_suite_is_an_early_required_contract(self):
+        tree=ast.parse((HERE/'public_ci.py').read_text())
+        contracts=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='contracts')
+        statement=next(n for n in contracts.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
+            and isinstance(n.value.func,ast.Name) and n.value.func.id=='run_owned'
+            and n.value.args and isinstance(n.value.args[0],ast.Constant)
+            and n.value.args[0].value=='contract-flat-git-source-binding')
+        calls=[]
+        scope={'ROOT':Path('/synthetic'),'sys':SimpleNamespace(executable='verified-python'),
+               'run_owned':lambda *args:calls.append(args)}
+        module=ast.Module(body=[statement],type_ignores=[])
+        exec(compile(module,'<mock source binding contract>','exec'),scope)
+        self.assertEqual(calls,[('contract-flat-git-source-binding', ['verified-python','-I','-B','-X','utf8',
+            str(Path('/synthetic/scripts/tests/test_ci_source_binding.py')),'-v'],180)])
+        scope['run_owned']=lambda *args: (_ for _ in ()).throw(RuntimeError('mock source binding failure'))
+        with self.assertRaisesRegex(RuntimeError,'mock source binding failure'):
+            exec(compile(module,'<mock source binding contract>','exec'),scope)
+        workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
+        self.assertLess(workflow.index('ci/public_ci.py contracts'),workflow.index('ci/public_ci.py early'))
+
     def test_original_full_build_and_separate_installed_gate_are_mandatory(self):
         text=(HERE/'public_ci.py').read_text()
         workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
