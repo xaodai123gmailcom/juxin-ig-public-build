@@ -18,8 +18,11 @@ candidate=output/'r64-early-chrome.json'
 run_owned('early-browser-selection',[python,'-X','utf8','scripts/browser_build_policy.py','--candidate-output',str(candidate)],180)
 browser=json.loads(candidate.read_text(encoding='utf-8'));chrome=browser['executable'];assert Path(chrome).is_file()
 env=os.environ.copy();env.update(PYTHON=python,IGAC_CROP_FIXTURE_REPORT=str(output/'r64-crop-icon-native.json'),IGAC_CROP_FIXTURE_SCREENSHOT=str(output/'r64-crop-icon-native.png'),JUXIN_REQUIRE_RECOVERY_UI_NATIVE='1',IGAC_TEST_CHROMIUM_EXECUTABLE=chrome,IGAC_POSTING_TEST_BROWSER=chrome,IGAC_REQUIRE_POSTING_BROWSER='1',IGAC_REQUIRE_PROFILE_BROWSER='1',IGAC_REQUIRE_STANDALONE_NURTURE_BROWSER='1',IGAC_REQUIRE_FINAL_SEED_BROWSER='1',JUXIN_REQUIRE_NURTURE_CLEANUP_NATIVE='1',IGAC_FINAL_SEED_FIXTURE_ARTIFACT_DIR=str(output/'final-seed-fixtures'))
-# Exercise the previously failing offline crop fixture before the long suite.
-# Its original required group remains below and must pass again with every gate.
+# Exercise the previously failing offline fixtures before the long suite.
+# Both groups remain mandatory in their original release gates as well.
+run_owned('early-saturation-focused-precheck', [python, '-X', 'utf8', 'scripts/run_backend_tests.py',
+    '-p', 'test_saturation_acceptance_r99.py', '-v'], 1800,
+    dict(env, IGAC_REQUIRE_SATURATION_BROWSER='1'))
 run_owned('early-crop-focused-precheck', [python, '-X', 'utf8', 'scripts/run_backend_tests.py',
     '-p', 'test_crop_icon_r64.py', '--case-timeout', '180', '-v'], 1800, env)
 failures=[]

@@ -226,30 +226,59 @@ def bounded_log_tail(path):
         return stream.read(32768).decode('utf-8', errors='replace')
 
 
-def parse_diagnostic_tails(tails, manifest, root=ROOT):
-    """Return only existing source test symbols and sealed relative locations."""
+DIAGNOSTIC_LIST_FIELDS = ('test_ids', 'failed_test_ids', 'source_locations', 'observed_exception_categories')
+DIAGNOSTIC_EXCEPTION_CATEGORIES = frozenset(('AssertionError', 'TimeoutError', 'CancelledError',
+    'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError'))
+
+
+def diagnostic_test_symbols(manifest, root):
     symbols = set()
     for name in manifest:
         if name.endswith('.py') and ('test' in Path(name).name):
             data = regular(root / name).read_text(encoding='utf-8-sig')
             symbols.update(re.findall(r'\bdef\s+(test_[A-Za-z0-9_]{1,160})\s*\(', data))
-    found_tests, locations = set(), set()
+    return symbols
+
+
+def parse_diagnostic_tails(tails, manifest, root=ROOT):
+    """Observed bounded-tail context; only exact unittest headers identify failures.
+
+    Exception categories can belong to handled/passing context, not the root cause.
+    Omission counts cover unique allowlisted items in these tails, not earlier logs.
+    """
+    symbols = diagnostic_test_symbols(manifest, root)
+    found_tests, failed_tests, locations, categories = set(), set(), set(), set()
+    ansi_color = re.compile(r'\x1b\[[0-9;]*m')
+    failure_header = re.compile(r'^(?:FAIL|ERROR): (test_[A-Za-z0-9_]{1,160}) '
+        r'\([A-Za-z_][A-Za-z0-9_.]*\)(?:$| )')
+    exception_header = re.compile(r'^(?:(?:builtins|asyncio\.exceptions|concurrent\.futures\._base)\.)?('
+        + '|'.join(sorted(DIAGNOSTIC_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
     prefix = str(root).replace('\\', '/').rstrip('/') + '/'
     patterns = (re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+)\", line ([1-9][0-9]{0,6})', re.I),
                 re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+):([1-9][0-9]{0,6})(?::|\b)', re.I),
                 re.compile(r'File \"([A-Za-z0-9_./-]+)\", line ([1-9][0-9]{0,6})'))
     for tail in tails:
         for line in tail.splitlines():
+            line = ansi_color.sub('', line)
             for name in re.findall(r'\btest_[A-Za-z0-9_]{1,160}\b', line):
                 if name in symbols:
                     found_tests.add(name)
+            failed = failure_header.match(line)
+            if failed and failed[1] in symbols:
+                failed_tests.add(failed[1])
+            category = exception_header.match(line)
+            if category:
+                categories.add(category[1])
             normalized = line.replace('\\', '/')
             for pattern in patterns:
                 for name, number in pattern.findall(normalized):
                     if name in manifest:
                         locations.add((name, int(number)))
-    return {'test_ids': sorted(found_tests)[:20],
-            'source_locations': [{'file': name, 'line': number} for name, number in sorted(locations)[:20]]}
+    items = {'test_ids': sorted(found_tests), 'failed_test_ids': sorted(failed_tests),
+        'source_locations': [{'file': name, 'line': number} for name, number in sorted(locations)],
+        'observed_exception_categories': sorted(categories)}
+    return {**{field: values[:20] for field, values in items.items()},
+            **{field + '_omitted': max(0, len(values) - 20) for field, values in items.items()}}
 
 
 def save_failure_diagnostic(label, receipt=None, paths=()):
@@ -258,7 +287,9 @@ def save_failure_diagnostic(label, receipt=None, paths=()):
         outcomes = {'completed', 'target-exited-nonzero', 'execution-timeout', 'cancelled',
             'cancelled-before-launch', 'descendant-drain-timeout', 'supervision-error', 'log-size-limit'}
         record = {'gate': label, 'outcome': 'validation-failed', 'exit_code': None,
-                  'test_ids': [], 'source_locations': [], 'diagnostic_parse_succeeded': False}
+                  'diagnostic_parse_succeeded': False,
+                  **{field: [] for field in DIAGNOSTIC_LIST_FIELDS},
+                  **{field + '_omitted': 0 for field in DIAGNOSTIC_LIST_FIELDS}}
         require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,95}', label), 'Invalid diagnostic gate')
         if receipt is not None:
             record['outcome'] = receipt.get('outcome') if receipt.get('outcome') in outcomes else 'supervision-error'
@@ -266,7 +297,7 @@ def save_failure_diagnostic(label, receipt=None, paths=()):
             record['exit_code'] = code if type(code) is int and -(2**31) <= code < 2**31 else None
         try:
             tails = [bounded_log_tail(path) for path in paths]
-            record.update(parse_diagnostic_tails(tails, read_json(ROOT / 'SOURCE_SHA256.json')))
+            record.update(parse_diagnostic_tails(tails, read_json(ROOT / 'SOURCE_SHA256.json'), ROOT))
             record['diagnostic_parse_succeeded'] = True
         except Exception:
             pass
@@ -282,24 +313,39 @@ def failure_diagnostics():
     regular(directory, directory=True)
     result = []
     files = sorted(directory.iterdir())
+    manifest = read_json(ROOT / 'SOURCE_SHA256.json')
+    symbols = diagnostic_test_symbols(manifest, ROOT)
+    fields = {'gate', 'outcome', 'exit_code', 'diagnostic_parse_succeeded',
+        *DIAGNOSTIC_LIST_FIELDS, *(field + '_omitted' for field in DIAGNOSTIC_LIST_FIELDS)}
     for path in files[:32]:
         require(re.fullmatch('[a-f0-9]{32}\\.json', path.name), 'Unexpected diagnostic file')
         value = read_json(path)
-        require(set(value) == {'gate','outcome','exit_code','test_ids','source_locations','diagnostic_parse_succeeded'},
+        require(type(value) is dict and set(value) == fields,
                 'Unexpected diagnostic field')
-        require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,95}', value['gate']), 'Invalid diagnostic gate')
-        require(value['outcome'] in {'completed','target-exited-nonzero','execution-timeout','cancelled',
+        require(type(value['gate']) is str and re.fullmatch(r'[a-z0-9][a-z0-9-]{0,95}', value['gate']), 'Invalid diagnostic gate')
+        require(type(value['outcome']) is str and value['outcome'] in {'completed','target-exited-nonzero','execution-timeout','cancelled',
             'cancelled-before-launch','descendant-drain-timeout','supervision-error','log-size-limit','validation-failed'},
             'Invalid diagnostic outcome')
         require(value['exit_code'] is None or (type(value['exit_code']) is int and -(2**31) <= value['exit_code'] < 2**31), 'Invalid diagnostic exit')
         require(type(value['diagnostic_parse_succeeded']) is bool, 'Invalid diagnostic parser status')
-        allowed = parse_diagnostic_tails([' '.join(value['test_ids'])], read_json(ROOT / 'SOURCE_SHA256.json'))['test_ids']
-        require(value['test_ids'] == allowed, 'Unsealed diagnostic test symbol')
-        require(len(value['source_locations']) <= 20, 'Too many source diagnostic locations')
-        manifest = read_json(ROOT / 'SOURCE_SHA256.json')
+        for field in DIAGNOSTIC_LIST_FIELDS:
+            rows, omitted = value[field], value[field + '_omitted']
+            require(type(rows) is list and len(rows) <= 20, 'Invalid diagnostic array')
+            require(type(omitted) is int and 0 <= omitted <= 65536 and
+                    (omitted == 0 or len(rows) == 20), 'Invalid diagnostic omission count')
+            require(value['diagnostic_parse_succeeded'] or (not rows and omitted == 0),
+                    'Failed parser cannot supply diagnostic detail')
+            if field != 'source_locations':
+                allowed = DIAGNOSTIC_EXCEPTION_CATEGORIES if field == 'observed_exception_categories' else symbols
+                require(all(type(row) is str and row in allowed for row in rows) and
+                        rows == sorted(set(rows)) and len(rows) + omitted <= len(allowed),
+                        'Unsealed or unordered diagnostic symbol')
         for row in value['source_locations']:
-            require(set(row) == {'file','line'} and row['file'] in manifest and type(row['line']) is int and
+            require(type(row) is dict and set(row) == {'file','line'} and type(row['file']) is str and
+                    row['file'] in manifest and type(row['line']) is int and
                     0 < row['line'] < 10000000, 'Invalid source diagnostic location')
+        locations = [(row['file'], row['line']) for row in value['source_locations']]
+        require(locations == sorted(set(locations)), 'Unordered diagnostic locations')
         result.append(value)
     bounded = bound_diagnostic_records(result)
     bounded['records_omitted'] += max(0, len(files) - 32)
@@ -307,15 +353,23 @@ def failure_diagnostics():
 
 
 def bound_diagnostic_records(records, budget=24576):
-    """Keep failure summaries comfortably below the 64 KiB file export limit."""
+    """Bound exported detail; record omissions are counted separately from items.
+
+    detail_items_omitted includes parser and size omissions in inspected records.
+    """
     result = {'records': [], 'records_omitted': 0, 'detail_items_omitted': 0}
-    encoded_size = lambda value: len(json.dumps(value, ensure_ascii=True, sort_keys=True).encode())
+    encoded_size = lambda value: len(json.dumps(value, ensure_ascii=True, sort_keys=True, indent=2).encode())
     for original in records:
-        record = dict(original, test_ids=list(original['test_ids']), source_locations=list(original['source_locations']))
-        while encoded_size(record) > 4096 and (record['test_ids'] or record['source_locations']):
-            field = 'source_locations' if record['source_locations'] else 'test_ids'
+        record = dict(original, **{field: list(original[field]) for field in DIAGNOSTIC_LIST_FIELDS})
+        result['detail_items_omitted'] += sum(record[field + '_omitted'] for field in DIAGNOSTIC_LIST_FIELDS)
+        while encoded_size(record) > 4096 and any(record[field] for field in DIAGNOSTIC_LIST_FIELDS):
+            # Preserve actual failure names ahead of generic context when space is tight.
+            field = next(field for field in ('source_locations', 'test_ids',
+                'observed_exception_categories', 'failed_test_ids') if record[field])
             record[field].pop()
+            record[field + '_omitted'] += 1
             result['detail_items_omitted'] += 1
+        require(encoded_size(record) <= 4096, 'Diagnostic record byte bound exceeded')
         if encoded_size(dict(result, records=result['records'] + [record])) > budget:
             result['records_omitted'] += 1
         else:

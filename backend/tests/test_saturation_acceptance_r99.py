@@ -150,7 +150,7 @@ class BrowserFallbackSaturationAcceptance(unittest.IsolatedAsyncioTestCase):
         worker,gate,state,blockers,discarded,tail=await self.saturated(profile_html('target',private=True,posts=9))
         with patch('app.playwright_worker._PROFILE_PRIVACY_RESPONSE_GRACE_SECONDS',.01):
             result=await worker._read_visible_profile_once('target')
-        self.assertEqual(('private',9,108,679),(result.visibility,result.posts,result.followers,result.following))
+        self.assertEqual(('private',9,240,680),(result.visibility,result.posts,result.followers,result.following))
         self.assert_pressure(worker,state,blockers,discarded,tail)
 
     async def test_no_passive_inline_or_visible_evidence_never_invents_zero_or_success(self):

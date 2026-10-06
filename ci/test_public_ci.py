@@ -105,6 +105,27 @@ class PublicContracts(unittest.TestCase):
         self.assertIn("case_timeout='90' if pattern=='test_final_seed_browser_r62.py' else '180'",text)
         self.assertLess(text.index('if failures:'),text.index('native=json.loads'))
 
+    def test_saturation_precheck_uses_original_command_and_required_browser(self):
+        tree=ast.parse((HERE/'public_ci_early.py').read_text())
+        call=next(n for n in tree.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
+            and isinstance(n.value.func,ast.Name) and n.value.func.id=='run_owned'
+            and n.value.args and isinstance(n.value.args[0],ast.Constant)
+            and n.value.args[0].value=='early-saturation-focused-precheck')
+        native=next(n for n in tree.body if isinstance(n,ast.For)
+            and isinstance(n.target,ast.Name) and n.target.id=='fixture')
+        self.assertLess(tree.body.index(call),tree.body.index(native))
+        calls=[];env={'IGAC_TEST_CHROMIUM_EXECUTABLE':'verified-chrome'}
+        scope={'python':'verified-python','env':env,'run_owned':lambda *args:calls.append(args)}
+        module=ast.Module(body=[call],type_ignores=[])
+        exec(compile(module,'<mock saturation precheck>','exec'),scope)
+        self.assertEqual(calls,[('early-saturation-focused-precheck', ['verified-python','-X','utf8',
+            'scripts/run_backend_tests.py','-p','test_saturation_acceptance_r99.py','-v'],1800,
+            dict(env,IGAC_REQUIRE_SATURATION_BROWSER='1'))])
+        self.assertNotIn('IGAC_REQUIRE_SATURATION_BROWSER',env)
+        scope['run_owned']=lambda *args: (_ for _ in ()).throw(RuntimeError('mock saturation failure'))
+        with self.assertRaisesRegex(RuntimeError,'mock saturation failure'):
+            exec(compile(module,'<mock saturation precheck>','exec'),scope)
+
     def test_crop_precheck_runs_first_and_failure_cannot_reach_full_suite(self):
         tree=ast.parse((HERE/'public_ci_early.py').read_text())
         call=next(n for n in tree.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
@@ -277,7 +298,9 @@ class PublicContracts(unittest.TestCase):
                    'test_unrecognized_personal_name\n File "/home/private/profile.json", line 12\n']
             value=common.parse_diagnostic_tails(tails,{'backend/tests/test_fixture.py':'a'*64},root)
             self.assertEqual(value,{'test_ids':['test_known_failure'],
-                'source_locations':[{'file':'backend/tests/test_fixture.py','line':2}]})
+                'failed_test_ids':[],'observed_exception_categories':[],
+                'source_locations':[{'file':'backend/tests/test_fixture.py','line':2}],
+                **{field+'_omitted':0 for field in common.DIAGNOSTIC_LIST_FIELDS}})
             encoded=json.dumps(value)
             for secret in ('very-private','profile.json',str(root),'test_unrecognized'):
                 self.assertNotIn(secret,encoded)
@@ -285,13 +308,32 @@ class PublicContracts(unittest.TestCase):
     def test_worst_case_failure_diagnostics_fit_json_byte_budget(self):
         record={'gate':'x'*96,'outcome':'target-exited-nonzero','exit_code':-2147483648,
             'diagnostic_parse_succeeded':True,'test_ids':['test_'+('a'*155)]*20,
-            'source_locations':[{'file':('a'*3000)+'.py','line':9999999}]*20}
+            'failed_test_ids':['test_'+('z'*155)]*20,
+            'observed_exception_categories':sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES),
+            'source_locations':[{'file':('a'*3000)+'.py','line':9999999}]*20,
+            **{field+'_omitted':0 for field in common.DIAGNOSTIC_LIST_FIELDS}}
+        record['test_ids_omitted']=7;record['failed_test_ids_omitted']=11;record['source_locations_omitted']=3
         summary=common.bound_diagnostic_records([copy.deepcopy(record) for _ in range(32)])
-        self.assertLessEqual(len(json.dumps(summary,ensure_ascii=True,sort_keys=True).encode()),24576)
+        self.assertLessEqual(len(json.dumps(summary,ensure_ascii=True,sort_keys=True,indent=2).encode()),24576)
         self.assertGreater(summary['records_omitted'],0)
-        self.assertGreater(summary['detail_items_omitted'],0)
+        first=summary['records'][0]
+        self.assertEqual(summary['detail_items_omitted'],32*sum(first[field+'_omitted'] for field in common.DIAGNOSTIC_LIST_FIELDS))
         self.assertTrue(summary['records'])
-        self.assertEqual(summary['records'][0]['exit_code'],-2147483648)
+        self.assertEqual(first['exit_code'],-2147483648)
+        self.assertTrue(first['failed_test_ids']);self.assertFalse(first['test_ids'])
+        for item in summary['records']:
+            self.assertLessEqual(len(json.dumps(item,ensure_ascii=True,sort_keys=True,indent=2).encode()),4096)
+            for field in common.DIAGNOSTIC_LIST_FIELDS:
+                self.assertEqual(len(item[field])+item[field+'_omitted'],len(record[field])+record[field+'_omitted'])
+        self.assertEqual(len(record['test_ids']),20)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);state={'run':{'fixture':True},'source_provenance':identity(),'nonce':'f'*32,'started_ns':1}
+            with patch.object(ci,'state_root',return_value=root),patch.object(ci,'verify_run_state',return_value=state),\
+                 patch.object(ci,'phase_status',return_value='failed'),patch.object(ci,'source_identity',return_value=identity()),\
+                 patch.object(ci,'failure_diagnostics',return_value=summary):
+                ci.export()
+            self.assertEqual(set(path.name for path in (root/'public').iterdir()),set(common.PUBLIC_FILES))
+            self.assertTrue(all(path.stat().st_size<=65536 for path in (root/'public').iterdir()))
 
     def test_prerequisites_are_read_only_and_match_runtime_and_chrome(self):
         text=(HERE/'public_ci_runner_prerequisites.ps1').read_text()
@@ -348,6 +390,109 @@ class PublicContracts(unittest.TestCase):
                      'scripts/verify_installed_recovery_r64.py','desktop/tests/recovery-ui-native-r64.cjs',
                      'renderer/tests/fixtures/recovery-ui-r64.tsx'):
             self.assertIn(path,source)
+
+
+    def test_failed_test_headers_are_distinct_from_passing_context_and_private_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'test_fixture.py'
+            names=['test_passed','test_failed','test_error','test_context']
+            path.write_text(''.join(f'def {name}(self): pass\n' for name in names))
+            tails=['\n'.join(('test_passed (fixture.Case.test_passed) ... ok',
+                'test_context (fixture.Case.test_context) ... FAIL',
+                'INFO FAIL: test_context (fixture.Case.test_context)',
+                '  FAIL: test_context (fixture.Case.test_context)',
+                '\x1b[31mFAIL: test_failed (fixture.Case.test_failed)\x1b[0m',
+                'ERROR: test_error (fixture.Case.test_error) (secret="private-subtest")',
+                'FAIL: test_failed_private_secret (fixture.Case.test_failed_private_secret)',
+                'AssertionError: secret-token=private-assertion-value',
+                'asyncio.exceptions.CancelledError: private-cancellation',
+                'RuntimeErrorPrivateSecret: private-class-name',
+                'INFO TimeoutError: prefixed-context',
+                'test_context handled ValueError: private-handled-value'))]
+            value=common.parse_diagnostic_tails(tails,{'test_fixture.py':'a'*64},root)
+            self.assertEqual(value['test_ids'],sorted(names))
+            self.assertEqual(value['failed_test_ids'],['test_error','test_failed'])
+            self.assertEqual(value['observed_exception_categories'],['AssertionError','CancelledError'])
+            self.assertTrue(all(value[field+'_omitted']==0 for field in common.DIAGNOSTIC_LIST_FIELDS))
+            encoded=json.dumps(value)
+            for secret in ('private','secret','fixture.Case',str(root),'RuntimeErrorPrivateSecret'):
+                self.assertNotIn(secret,encoded)
+            context=common.parse_diagnostic_tails(['test_context ... FAIL\nAssertionError: handled'],{'test_fixture.py':'a'*64},root)
+            self.assertEqual(context['failed_test_ids'],[])
+            self.assertEqual(context['observed_exception_categories'],['AssertionError'])
+
+    def test_diagnostic_parser_reports_each_unique_item_lost_to_twenty_item_cap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'test_fixture.py'
+            names=[f'test_case_{index:02d}' for index in range(47)]
+            path.write_text(''.join(f'def {name}(self): pass\n' for name in names))
+            lines=[f'{name} ... ok' for name in names[:23]]
+            lines += [f'FAIL: {name} (fixture.Case.{name})' for name in names[23:]]
+            lines += [f'  File "test_fixture.py", line {index+1}' for index in range(29)]
+            lines += [f'{name}: private-value' for name in common.DIAGNOSTIC_EXCEPTION_CATEGORIES]
+            value=common.parse_diagnostic_tails(['\n'.join(lines)]*2,{'test_fixture.py':'a'*64},root)
+            self.assertEqual(value['test_ids'],names[:20]);self.assertEqual(value['test_ids_omitted'],27)
+            self.assertEqual(value['failed_test_ids'],names[23:43]);self.assertEqual(value['failed_test_ids_omitted'],4)
+            self.assertEqual(len(value['source_locations']),20);self.assertEqual(value['source_locations_omitted'],9)
+            self.assertEqual(value['observed_exception_categories'],sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES))
+            self.assertEqual(value['observed_exception_categories_omitted'],0)
+            record=dict(value,gate='mock-gate',outcome='target-exited-nonzero',exit_code=1,diagnostic_parse_succeeded=True)
+            summary=common.bound_diagnostic_records([record])
+            self.assertEqual(summary['detail_items_omitted'],40)
+
+    def test_failure_diagnostic_export_rejects_unsealed_types_arrays_enums_and_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'test_fixture.py'
+            names=[f'test_case_{index:02d}' for index in range(24)]
+            path.write_text(''.join(f'def {name}(self): pass\n' for name in names))
+            common.write_json(root/'SOURCE_SHA256.json',{'test_fixture.py':'a'*64})
+            details=common.parse_diagnostic_tails(['\n'.join(
+                [f'FAIL: {name} (fixture.Case.{name})' for name in names]
+                +['ValueError: private-value','AssertionError: private-value',
+                  '  File "test_fixture.py", line 1','  File "test_fixture.py", line 2'])],{'test_fixture.py':'a'*64},root)
+            record=dict(details,gate='mock-gate',outcome='target-exited-nonzero',exit_code=1,diagnostic_parse_succeeded=True)
+            diagnostic=root/'failures'/('a'*32+'.json');common.write_json(diagnostic,record)
+            mutations=[('raw_stderr','private-value'),('gate',[]),('outcome',{}),('exit_code',True),
+                ('diagnostic_parse_succeeded',1),('diagnostic_parse_succeeded',False),
+                ('failed_test_ids',['test_private_secret']),('failed_test_ids',names[:21]),
+                ('failed_test_ids',names[:2][::-1]),('failed_test_ids',[names[0],names[0]]),
+                ('failed_test_ids',[None]),('observed_exception_categories',['PrivateSecretError']),
+                ('observed_exception_categories',['ValueError','AssertionError']),
+                ('observed_exception_categories',['AssertionError','AssertionError']),
+                ('source_locations',[{'file':'/home/private/profile.py','line':1}]),
+                ('source_locations',[{'file':'test_fixture.py','line':True}]),
+                ('source_locations',[{'file':'test_fixture.py','line':1,'raw':'private-value'}]),
+                ('source_locations',details['source_locations'][::-1]),
+                ('source_locations',[details['source_locations'][0]]*2),
+                ('source_locations',[None])]
+            for field in common.DIAGNOSTIC_LIST_FIELDS:
+                mutations.extend((field,value) for value in ('private-value',{},None))
+                mutations.extend((field+'_omitted',value) for value in (True,-1,1.5,'1',65537))
+            mutations += [('failed_test_ids_omitted',5),('source_locations_omitted',1),
+                ('observed_exception_categories_omitted',1)]
+            with patch.object(common,'ROOT',root),patch.object(common,'state_root',return_value=root):
+                self.assertEqual(common.failure_diagnostics()['records'],[record])
+                for field,value in mutations:
+                    with self.subTest(field=field,value=value):
+                        bad=dict(record);bad[field]=value;diagnostic.write_text(json.dumps(bad))
+                        with self.assertRaises(RuntimeError):common.failure_diagnostics()
+                missing=dict(record);missing.pop('failed_test_ids');diagnostic.write_text(json.dumps(missing))
+                with self.assertRaises(RuntimeError):common.failure_diagnostics()
+                diagnostic.write_text('[]')
+                with self.assertRaises(RuntimeError):common.failure_diagnostics()
+
+    def test_diagnostic_parse_failure_saves_only_empty_typed_details(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);common.write_json(root/'SOURCE_SHA256.json',{})
+            with patch.object(common,'ROOT',root),patch.object(common,'state_root',return_value=root),\
+                 patch.object(common,'bounded_log_tail',side_effect=RuntimeError('private-parser-error')):
+                common.save_failure_diagnostic('mock-failure',paths=(root/'private.log',))
+                summary=common.failure_diagnostics()
+            self.assertEqual(len(summary['records']),1)
+            record=summary['records'][0];self.assertFalse(record['diagnostic_parse_succeeded'])
+            for field in common.DIAGNOSTIC_LIST_FIELDS:
+                self.assertEqual(record[field],[]);self.assertEqual(record[field+'_omitted'],0)
+            self.assertNotIn('private',json.dumps(summary))
 
 
 if __name__=='__main__':

@@ -9,6 +9,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from public_ci_runtime import collect_inventory, inventory_digest
 from public_ci_common import (ROOT, STAGES, PUBLIC_FILES, EARLY_FILES, actual_run, bind_native,
     check_telemetry_consent, digest, establish_telemetry_consent, read_json,
     regular, require, run_owned, source_identity, state_root, validate_source_build,
@@ -35,7 +36,8 @@ def powershell(script):
 def contracts():
     run_owned('runner-existing-prerequisites', powershell('ci/public_ci_runner_prerequisites.ps1'), 90)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
-                 'test-r64-crop-proof.py', 'test-r64-recovery-ui-proof.py', 'test_public_ci.py'):
+                 'test-r64-crop-proof.py', 'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
+                 'test_public_ci_runtime.py'):
         run_owned('contract-' + name.replace('_', '-').replace('.', '-'),
                   [sys.executable, '-I', '-X', 'utf8', str(ROOT / 'ci' / name), '-v'], 180)
     run_owned('unicode-resource-copy', ['node', '--test', 'scripts/tests/portable_resources_r94.test.mjs'], 180)
@@ -79,7 +81,15 @@ def installed():
     return installed_hashes()
 
 
-def installed_hashes():
+def installed_inventory():
+    installed = read_json(ROOT / 'installer-output/installed-verification.json')
+    installation = Path(installed['installed_root'])
+    expected = Path(os.environ['LOCALAPPDATA']) / 'Programs/juxin-ig-audience-collector-newgen'
+    require(installation.resolve() == expected.resolve(), 'Unexpected installed product root')
+    return collect_inventory(installation, ROOT)
+
+
+def installed_hashes(runtime_inventory=None):
     output = ROOT / 'installer-output'
     installed = read_json(output / 'installed-verification.json')
     installation = Path(installed['installed_root'])
@@ -91,7 +101,8 @@ def installed_hashes():
         'installed_app_asar_sha256': digest(installation / 'resources/app.asar'),
         'installed_acceptance_sha256': digest(output / 'installed-verification.json'),
         'installed_scale_sha256': digest(output / 'installed-scale-verification.json'),
-        'installed_recovery_sha256': digest(output / 'installed-recovery-r64.json')}
+        'installed_recovery_sha256': digest(output / 'installed-recovery-r64.json'),
+        'runtime_inventory_sha256': inventory_digest(installed_inventory() if runtime_inventory is None else runtime_inventory)}
 
 
 def run_stage(name, action):
@@ -134,12 +145,14 @@ def export():
     statuses = {name: phase_status(state, name) for name in STAGES}
     source_hashes = {}
     installed_evidence = {}
+    runtime_inventory = {}
     if statuses['build'] == 'passed':
         source_hashes = validate_source_build(state)
         require(source_hashes == read_json(state_root() / 'build-result.json')['hashes'], 'Build bytes changed after acceptance')
     if statuses['installed'] == 'passed':
         runpy.run_path(str(ROOT / 'ci/public_ci_validate_installed.py'))
-        installed_evidence = installed_hashes()
+        runtime_inventory = installed_inventory()
+        installed_evidence = installed_hashes(runtime_inventory)
         require(installed_evidence == read_json(state_root() / 'installed-result.json')['hashes'], 'Installed bytes changed after acceptance')
     common = {'schema': 1, 'run': state['run'], 'source': public_identity(source_identity()),
         'run_nonce': state['nonce'], 'started_ns': state['started_ns'], 'exported_ns': time.time_ns(),
@@ -154,7 +167,7 @@ def export():
         status=statuses['build'], hashes=source_hashes,
         original_entry='scripts/build_windows.ps1', browser_mode='installed-chrome'))
     write_json(destination / 'installed-acceptance-proof.json', dict(common, stage='installed-acceptance',
-        status=statuses['installed'], hashes=installed_evidence,
+        status=statuses['installed'], hashes=installed_evidence, runtime_inventory=runtime_inventory,
         installer_sha256=source_hashes.get('installer_sha256'),
         prior_early_gates=statuses['early'], source_build=statuses['build']))
     require(set(path.name for path in destination.iterdir()) == set(PUBLIC_FILES), 'Unexpected export entry')
