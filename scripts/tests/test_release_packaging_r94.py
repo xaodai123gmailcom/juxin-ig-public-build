@@ -14,6 +14,9 @@ from unittest.mock import Mock, patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'ci'))
+from public_build_contract import (assert_public_build_chain, assert_ui_dependencies,
+    assert_runtime_imports, assert_browser_prerequisites, read_sources)
 # New Python processes and newly created venvs can cold-start slowly on Windows.
 # This is a ceiling, not a sleep; explicit hang/shutdown tests keep short limits.
 FIXTURE_STARTUP_TIMEOUT = 20.0
@@ -470,21 +473,22 @@ class ColdStartRegressionTests(unittest.TestCase):
 
 class ReleaseWiringTests(unittest.TestCase):
     def test_release_installs_ui_fixture_dependencies_before_backend_discovery(self):
-        source = (ROOT / '.github/workflows/windows-installer.yml').read_text(encoding='utf-8').split('\n  build:\n')[1]
-        self.assertEqual(1, source.count('run: npm ci'))
-        self.assertLess(source.index('run: npm ci'), source.index('- name: Test Python core'))
+        sources = read_sources(ROOT)
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_ui_dependencies(sources['wrapper'], sources['build'], sources['install'])
         self.assertIn("from 'esbuild'", (ROOT / 'renderer/tests/build-cleanup-fixture.mjs').read_text())
 
-    def test_both_workflow_freezes_keep_runtime_imports(self):
-        source = (ROOT / '.github/workflows/windows-installer.yml').read_text(encoding='utf-8')
-        self.assertEqual(2, source.count('"--collect-all", "playwright"'))
-        self.assertEqual(2, source.count('"--hidden-import", "websockets.sync.client"'))
+    def test_public_and_local_freezes_keep_runtime_imports(self):
+        sources = read_sources(ROOT)
+        # Public verification invokes the original freeze. Its output feeds
+        # both packagers; there are no separate inline CI freeze jobs.
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_runtime_imports(sources['build'])
 
     def test_release_job_prepares_browser_before_backend_tests(self):
-        source = (ROOT / '.github/workflows/windows-installer.yml').read_text(encoding='utf-8').split('\n  build:\n')[1]
-        self.assertLess(source.index('playwright install chromium --no-shell'), source.index('- name: Test Python core'))
-        self.assertIn('PLAYWRIGHT_BROWSERS_PATH', source)
-        self.assertIn('prune_browser_runtime.py', source)
+        sources = read_sources(ROOT)
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_browser_prerequisites(sources['early'], sources['build'])
 
     def test_frozen_service_and_verified_archive_are_required_before_publication(self):
         source = (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8-sig')

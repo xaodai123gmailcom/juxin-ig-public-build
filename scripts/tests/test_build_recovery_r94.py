@@ -20,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import install_python_dependencies as dependencies
 import prune_browser_runtime as browsers
+sys.path.insert(0, str(ROOT / 'ci'))
+from public_build_contract import assert_public_build_chain, assert_recovery_gate, read_sources
 
 
 def run_fixture_command(command, *, timeout=45, **kwargs):
@@ -258,11 +260,11 @@ class BrowserDownloadPlacementTests(unittest.TestCase):
 
 class BuildRecoveryWiringTests(unittest.TestCase):
     def test_local_and_ci_builds_require_recovery_regressions(self):
-        build = (ROOT / 'scripts/build_windows.ps1').read_text(encoding='utf-8-sig')
-        self.assertIn('test_build_recovery_r94.py', build)
-        self.assertLess(build.index('$BuildRecoveryExitCode -ne 0'), build.index('$PyInstallerExitCode ='))
-        workflow = (ROOT / '.github/workflows/windows-installer.yml').read_text()
-        self.assertIn('test_build_recovery_r94.py', workflow)
+        sources = read_sources(ROOT)
+        # Public CI delegates to the same mandatory local build gate; the
+        # retired private workflow no longer embeds a second discovery call.
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_recovery_gate(sources['build'])
 
     def test_frozen_gate_does_not_interpret_brackets_in_paths_as_wildcards(self):
         source = (ROOT / 'scripts/test_frozen_openvino.ps1').read_text(encoding='utf-8-sig')

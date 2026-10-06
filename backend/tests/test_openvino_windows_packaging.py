@@ -20,6 +20,9 @@ from scripts import verify_openvino_windows
 from scripts import verify_runtime_ready
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / 'ci'))
+from public_build_contract import (assert_public_build_chain, assert_native_logging_wiring,
+                                   assert_unicode_runtime_wiring, read_sources)
 
 
 def _write_pe(path: Path, *, machine: int = 0x8664, suffix: bytes = b"") -> None:
@@ -431,28 +434,19 @@ class OpenVinoWindowsPackagingTests(unittest.TestCase):
             self.assertIn(expected, source)
         self.assertEqual(2, source.count("$global:LASTEXITCODE = 91"))
 
-    def test_windows_workflow_uses_safe_native_logging_in_both_freeze_jobs(self) -> None:
-        source = (
-            PROJECT_ROOT / ".github" / "workflows" / "windows-installer.yml"
-        ).read_text(encoding="utf-8")
-        self.assertEqual(2, source.count("$pyinstallerExitCode = Invoke-IgacNativeCommandWithLog"))
-        self.assertGreaterEqual(
-            source.count("Verify Windows PowerShell native stderr logging"), 2
-        )
-        self.assertIn('"scripts\\invoke_native_logged.ps1"', source)
-        self.assertIn('"scripts\\test_native_command_logging.ps1"', source)
-        self.assertIn("Verify PowerShell 7 native exit preference restoration", source)
-        self.assertNotIn(
-            "& pyinstaller @arguments 2>&1 | Tee-Object",
-            source,
-        )
+    def test_public_workflow_uses_safe_native_logging_in_both_powershell_hosts(self) -> None:
+        sources = read_sources(PROJECT_ROOT)
+        # CI invokes the original freeze with its Windows PowerShell probe;
+        # its early public contracts additionally exercise the PowerShell 7 host.
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_native_logging_wiring(sources['wrapper'], sources['build'], sources['pwsh'])
 
     def test_unicode_classifier_smoke_unpacks_all_four_compiled_models(self) -> None:
-        source = (
-            PROJECT_ROOT / ".github" / "workflows" / "windows-installer.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("_,gender,_,_=c._get_compiled_models()", source)
-        self.assertNotIn("_,gender=c._get_compiled_models()", source)
+        sources = read_sources(PROJECT_ROOT)
+        # Preserve real source/venv Unicode inference and the copied frozen
+        # product check through their current public orchestration, not YAML text.
+        assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
+        assert_unicode_runtime_wiring(sources['wrapper'], sources['unicode'], sources['verifier'])
 
 
 if __name__ == "__main__":

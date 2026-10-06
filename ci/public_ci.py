@@ -35,9 +35,11 @@ def powershell(script):
 
 def contracts():
     run_owned('runner-existing-prerequisites', powershell('ci/public_ci_runner_prerequisites.ps1'), 90)
+    run_owned('powershell7-native-command-logging', ['pwsh.exe', '-NoLogo', '-NoProfile', '-NonInteractive',
+              '-File', str(ROOT / 'ci/public_ci_pwsh_logging.ps1')], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
                  'test-r64-crop-proof.py', 'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
-                 'test_public_ci_runtime.py'):
+                 'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py'):
         run_owned('contract-' + name.replace('_', '-').replace('.', '-'),
                   [sys.executable, '-I', '-X', 'utf8', str(ROOT / 'ci' / name), '-v'], 180)
     run_owned('unicode-resource-copy', ['node', '--test', 'scripts/tests/portable_resources_r94.test.mjs'], 180)
@@ -49,6 +51,8 @@ def early():
     python = str(ROOT / '.venv/Scripts/python.exe')
     run_owned('early-python-dependencies', [python, '-I', '-X', 'utf8', 'scripts/install_python_dependencies.py',
                '--project-root', str(ROOT)], 1800)
+    run_owned('unicode-source-runtime', [sys.executable, '-I', '-X', 'utf8',
+              str(ROOT / 'ci/public_ci_unicode.py'), 'source'], 3600)
     run_owned('early-node-dependencies', ['npm.cmd', 'ci', '--include=dev', '--no-audit', '--no-fund'], 900)
     for target in ('build:ui', 'build:electron'):
         run_owned('early-' + target.replace(':', '-'), ['npm.cmd', 'run', target], 600)
@@ -69,6 +73,9 @@ def build():
     run_owned('build-existing-prerequisites', powershell('ci/public_ci_runner_prerequisites.ps1'), 90)
     run_owned('full-original-windows-build', powershell('scripts/build_windows.ps1') +
               ['-BrowserMode', 'installed-chrome'], 10800)
+    validate_source_build(state)
+    run_owned('unicode-copied-frozen-runtime', [sys.executable, '-I', '-X', 'utf8',
+              str(ROOT / 'ci/public_ci_unicode.py'), 'frozen'], 900)
     return validate_source_build(state)
 
 
