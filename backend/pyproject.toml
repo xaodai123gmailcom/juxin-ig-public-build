@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ig-audience-collector-core"
+version = "3.0.4"
+description = "Local-only backend for the IG Audience Collector desktop application"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "pydantic>=2.8,<3",
+  "playwright==1.62.0",
+  "openai>=2,<3",
+  "openvino==2025.4.1",
+  "openvino-telemetry==2025.2.0",
+  "numpy==2.3.5",
+  "Pillow==12.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.27,<1",
+  "pytest>=8,<9",
+  "tzdata==2026.4",
+]
+
+[project.scripts]
+igac-core = "app.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.setuptools.package-data]
+app = [
+  "assets/person_classifier/MODEL_SOURCES.json",
+  "assets/person_classifier/LICENSE",
+  "assets/person_classifier/README.md",
+  "assets/person_classifier/*.xml",
+  "assets/person_classifier/*.bin",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

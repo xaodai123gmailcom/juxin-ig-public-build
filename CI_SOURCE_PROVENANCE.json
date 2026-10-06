@@ -1,0 +1,13 @@
+{
+  "mode": "flat-git-ci",
+  "product_version": "3.0.4",
+  "repository": {
+    "full_name": "xaodai123gmailcom/juxin-ig-public-build",
+    "id": "1406784621",
+    "owner_id": "337452708"
+  },
+  "representation": "public-sanitized-source",
+  "schema": 2,
+  "source_manifest_sha256": "039612d8919a4e21c553e56f44d5aa2ee81fffc88e19549dbb644b355c55c47f",
+  "source_revision": "stability-r94"
+}

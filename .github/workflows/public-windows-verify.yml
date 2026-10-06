@@ -1,0 +1,94 @@
+name: Public Windows source and installed acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'xaodai123gmailcom/juxin-ig-public-build' &&
+      github.repository_id == '1406784621' &&
+      github.repository_owner_id == '337452708' &&
+      github.event.repository.private == false
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PYTHONDONTWRITEBYTECODE: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      # All action commits were resolved from the official action release pages.
+      - name: Check out exact source commit for early verification
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Verify real source and raw local telemetry consent
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py initialize
+      - name: Verify public orchestration and release receipt contracts
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py contracts
+      - name: Run all mandatory early browser and native regressions
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py early
+      - name: Check out same exact commit into a fresh build tree
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+          clean: true
+          submodules: false
+          lfs: false
+      - name: Run original full Windows build and NSIS gates
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py build
+      - name: Install runner-only product and verify actual installed acceptance
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py installed
+      - name: Construct bounded synthetic evidence summaries
+        id: export_proof
+        if: always()
+        working-directory: source
+        shell: cmd
+        run: python -I -X utf8 ci/public_ci.py export
+      - name: Export only the three reviewed JSON summaries
+        if: always() && steps.export_proof.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-windows-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/juxin-public-ci-${{ github.run_id }}-${{ github.run_attempt }}/public/run-summary.json
+            ${{ runner.temp }}/juxin-public-ci-${{ github.run_id }}-${{ github.run_attempt }}/public/source-build-proof.json
+            ${{ runner.temp }}/juxin-public-ci-${{ github.run_id }}-${{ github.run_attempt }}/public/installed-acceptance-proof.json
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false

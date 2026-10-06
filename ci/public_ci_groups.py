@@ -1,0 +1,21 @@
+"""Required early backend groups; all are run with real-browser requirements."""
+PATTERNS=[
+    'test_installed_recovery_r64.py',
+    'test_combined_recovery_r64.py','test_hidden_collection_blocker_r63.py',
+    'test_posting_withdraw*_r63.py','test_posting_durable_preflight_r63.py',
+    'test_crop_icon_r64.py','test_crop_guard_r64.py',
+    'test_installed_nurture_cleanup_upgrade_r63.py',
+    'test_nurture_cleanup*.py','test_nurture_closed_profile_guard.py','test_nurture_missing_lease_surface.py',
+    'test_ig_only_runtime.py','test_window_reuse_r93.py','test_*r31.py',
+    'test_final_seed_browser_r62.py','test_final_seed_completion_r62.py','test_screening_factory_recovery_r62.py',
+    'test_standalone_nurture_browser_r6.py','test_standalone_reels_routes_r62.py',
+    'test_standalone_watch_advance_r62.py','test_nurture_completion_cleanup_r62.py',
+    'test_installed_standalone_nurture_r6.py',
+    'test_posting_crop_transition_r62.py','test_original_crop_readiness_r62.py',
+    'test_posting_editing_state_r62.py','test_posting_viewport_labels.py',
+    'test_posting_viewport_lifecycle_r62.py','test_posting_dom.py',
+    'test_posting_transition_r80.py','test_instagram_identity*r62.py',
+    'test_posting_startup_r62.py','test_posting_retry_r61.py',
+    'test_live_parent_recheck_r6.py','test_installed_collection_completion_r97.py',
+    'test_collector_parent_handoff_r6.py','test_single_gap_recheck_r6.py',
+]

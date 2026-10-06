@@ -1,0 +1,13 @@
+.formal-nav a { position: relative; }
+/* These emphasis rules also apply inside the compact sidebar's small labels. */
+.unread-badge { display: inline-flex !important; align-items: center; justify-content: center; box-sizing: border-box; min-width: 25px; height: 25px; padding: 0 6px; border: 2px solid #101a2b; border-radius: 20px; background: #cf2f4e; color: #fff !important; font-size: 14px !important; line-height: 21px !important; font-weight: 750 !important; font-variant-numeric: tabular-nums; white-space: nowrap; letter-spacing: 0; box-shadow: 0 2px 5px #0004; }
+.total-unread-badge { position: absolute; right: 0; top: -7px; max-width: 100%; height: auto; min-height: 25px; overflow-wrap: anywhere; white-space: normal; }
+.window-unread-badge { align-self: center; flex-shrink: 0; max-width: 65px; height: auto; min-height: 26px; white-space: normal; overflow-wrap: anywhere; }
+.account-sidebar-item.drag-over { box-shadow: inset 0 3px #b5a0ff; }
+.account-sidebar-item[draggable=true] { cursor: grab; }
+.account-sidebar-item[draggable=true]:active { cursor: grabbing; }
+.account-cookie-section { margin: 15px 0; padding: 15px; border: 1px solid #354963; border-radius: 12px; background: #0e192b; }
+.account-cookie-section summary { color: #c2d0e6; font-size: 13px; font-weight: 600; line-height: 1.6; cursor: pointer; }
+.account-cookie-section summary:focus-visible { outline: 2px solid #89c9ff; outline-offset: 4px; border-radius: 3px; }
+.account-cookie-section textarea { margin-top: 12px; }
+.account-cookie-section input[type=file] { max-width: 100%; margin-top: 10px; color: #aabcce; font-size: 12px; }

@@ -1,0 +1,2 @@
+# Source manifests hash exact bytes. Preserve LF, CRLF and UTF-8 BOM on checkout.
+* -text

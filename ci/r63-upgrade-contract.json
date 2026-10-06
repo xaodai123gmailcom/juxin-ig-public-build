@@ -1,0 +1,216 @@
+{
+  "report_key": "nurture_cleanup_upgrade",
+  "flag": "--nurture-cleanup-upgrade",
+  "default_requires_windows_frozen": true,
+  "contract": "nurture-orphan-hold-upgrade-v1",
+  "baseline_commit": "252590e257fbbc0e1974ad727e2086ab858bb2c6",
+  "legacy_schema_sha256": "105cc4955ae06ea2f59a94db1f6586c6826b8007dc2d5bba851abf7afac93775",
+  "baseline_database_code_sha256": "4e24d55bb7a4cc0fee25045776bd42edda57b83147d7b6752c011a8812549377",
+  "baseline_posting_code_sha256": "c56f627fc95d8f7e8539e164400418933394908d10f815c8c63ec0e7c4399a87",
+  "required_true_flags": [
+    "archived_history_visible",
+    "archived_hold_visible_before_startup",
+    "fresh_account_successor_after_startup",
+    "network_disabled",
+    "no_historical_activity_replay",
+    "normal_startup_and_shutdown",
+    "owner_isolation",
+    "persisted_before_process",
+    "production_closed_profile_guard",
+    "production_manager_and_service",
+    "second_startup_idempotent",
+    "synthetic",
+    "synthetic_desktop_rpc",
+    "verified"
+  ],
+  "required_false_flags": [
+    "live_accounts_tested",
+    "user_data_touched"
+  ],
+  "required_root_fields": [
+    "activity_attempts",
+    "admission",
+    "archived_history_visible",
+    "archived_hold_visible_before_startup",
+    "baseline_commit",
+    "baseline_database_code_sha256",
+    "baseline_posting_code_sha256",
+    "cases",
+    "chronology_clock",
+    "contract",
+    "fresh_account_successor_after_startup",
+    "input_database_sha256",
+    "legacy_schema_sha256",
+    "live_accounts_tested",
+    "manifest_sha256",
+    "network_attempts",
+    "network_disabled",
+    "no_historical_activity_replay",
+    "nonce",
+    "normal_startup_and_shutdown",
+    "opened_ns",
+    "opened_perf_ns",
+    "owner_isolation",
+    "persisted_before_process",
+    "persisted_state",
+    "production_closed_profile_guard",
+    "production_manager_and_service",
+    "queued_blockers_before_startup",
+    "runtime",
+    "second_startup_idempotent",
+    "seed_completed_ns",
+    "seed_completed_perf_ns",
+    "seed_pid",
+    "startup_action_transition",
+    "startup_sequence",
+    "synthetic",
+    "synthetic_desktop_rpc",
+    "synthetic_open_admissions",
+    "user_data_touched",
+    "verified"
+  ],
+  "case_outcomes": {
+    "closed_legacy": {
+      "hold_after": false,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": ""
+    },
+    "closed_lost": {
+      "hold_after": false,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": ""
+    },
+    "archived_closed": {
+      "hold_after": false,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": ""
+    },
+    "open": {
+      "hold_after": true,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": "conflict"
+    },
+    "opening": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "closing": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "successor_lease": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "fresh_account_lease": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "queued_collection": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "queued_studio": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "queued_monitor": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "queued_action": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "prepared_posting": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "unknown_action": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "inflight": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "conflict"
+    },
+    "unknown_profile": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "not_found"
+    },
+    "foreign_profile_owner": {
+      "hold_after": true,
+      "startup_guard_calls": 0,
+      "explicit_retry_error": "not_found"
+    },
+    "unknown_state": {
+      "hold_after": true,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": "upstream_unavailable"
+    }
+  },
+  "case_fields": [
+    "explicit_retry_error",
+    "historical_lease_token",
+    "history_sha256",
+    "hold_after",
+    "hold_before",
+    "job_id",
+    "profile_id",
+    "recovery_state",
+    "startup_guard_calls",
+    "verified"
+  ],
+  "admission_cases": [
+    "closed_legacy",
+    "closed_lost",
+    "archived_closed"
+  ],
+  "admission_fields": [
+    "account_lease_released",
+    "blocked_open_before",
+    "blocked_task_before",
+    "new_job_id",
+    "new_task_after",
+    "open_after"
+  ],
+  "startup_sequence": [
+    "database.initialize",
+    "service.recover_interrupted_operations",
+    "posting.recover",
+    "monitor.recover_interrupted",
+    "studio.recover",
+    "accounts.recover",
+    "studio.start_scheduler",
+    "posting.start_scheduler"
+  ],
+  "persisted_state": {
+    "expected_startup_action_pauses": 1,
+    "global_dedupe_identities": 3,
+    "historical_jobs": 19,
+    "login_files": 68,
+    "new_jobs": 3,
+    "protected_tables": 15,
+    "recovered_holds": 3,
+    "retained_holds": 15,
+    "untouched_leases": 3,
+    "verified": true
+  },
+  "source_test_pattern": "test_installed_nurture_cleanup_upgrade_r63.py",
+  "installed_timeout_seconds": 120,
+  "source_result_is_not_windows_evidence": true,
+  "chronology_clock": "perf_counter_ns-system-v1"
+}
+

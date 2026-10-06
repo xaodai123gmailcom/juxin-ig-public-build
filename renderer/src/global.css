@@ -1,0 +1,104 @@
+:root {
+  --ui-bg: #0a1020;
+  --ui-panel: #111b2c;
+  --ui-border: #2d3d57;
+  --ui-text: #e9effb;
+  --ui-muted: #a0aec5;
+  --ui-accent: #a997ff;
+  --ui-mint: #6ee0bf;
+  --ui-focus: #91ebe1;
+  --ui-surface-raised: #17243a;
+  --ui-surface-inset: #0d1728;
+  --ui-border-soft: #253650;
+  --ui-text-soft: #c5d1e4;
+  --ui-warning: #f3d29a;
+  --ui-danger: #ffc0c7;
+  --ui-radius: 14px;
+  color-scheme: dark;
+  font-family: Inter, "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  background: #090e1a;
+  color: #eef2ff;
+}
+
+/* Shared desktop surfaces: visible controls without compositor-heavy effects. */
+::selection { color: #fff; background: #54438c; }
+:where(.formal-scroll, .formal-table-scroll, .quick-review-scroll, .collection-column-scroll,
+  .account-sidebar-list, .account-editor, .account-binding-list, .studio-job-list) {
+  scrollbar-width: thin;
+  scrollbar-color: #465671 #0d1523;
+}
+:where(.formal-scroll, .formal-table-scroll, .quick-review-scroll, .collection-column-scroll,
+  .account-sidebar-list, .account-editor, .account-binding-list, .studio-job-list)::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+:where(.formal-scroll, .formal-table-scroll, .quick-review-scroll, .collection-column-scroll,
+  .account-sidebar-list, .account-editor, .account-binding-list, .studio-job-list)::-webkit-scrollbar-thumb {
+  border: 2px solid #0d1523;
+  border-radius: 8px;
+  background: #465671;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: #090e1a;
+  color: #eef2ff;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+/* r35: native form affordances stay legible on every dark workspace. */
+:where(input[type="checkbox"], input[type="radio"]) { accent-color: #987bf0; }
+:where(input, select, textarea):disabled { cursor: not-allowed; }
+:where(input, textarea)[readonly] { caret-color: transparent; }
+:where(button, a, summary, label) { -webkit-tap-highlight-color: #a997ff24; }
+
+@keyframes newgen-spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: newgen-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

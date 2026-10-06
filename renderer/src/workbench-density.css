@@ -1,0 +1,23 @@
+/* Static explanatory copy is removed in JSX. Data, labels and errors remain visible. */
+.formal-panel-header { padding-block: 12px; }
+.collection-source-settings .collection-parallel-setting { grid-template-columns: minmax(0, 1fr) auto; padding-block: 9px; }
+.collection-discard-activity { grid-template-columns: minmax(0, 1fr); margin-top: 12px; padding-top: 12px; }
+.collection-discard-footer { justify-content: flex-end; margin-top: 10px; }
+.collection-claim-lock { padding-block: 9px; }
+.collection-settings-body > .collection-discard-body { padding-top: 12px; }
+.report-workspace-tabs > button { min-height: 44px; padding: 10px 16px; }
+.split-review-intro { padding-block: 16px; }
+.review-stage-controls { gap: 10px; padding-block: 12px; }
+.home-hero { min-height: 280px; padding: 36px; }
+.home-hero h1 { margin-top: 0; margin-bottom: 24px; }
+.home-guide-card { padding: 18px; }
+.home-guide-card h3 { margin-block: 14px 12px; }
+@media (max-width: 1000px) {
+  .home-hero { min-height: 250px; padding: 30px; }
+}
+@media (max-width: 700px) {
+  .home-hero { min-height: 0; padding: 26px 22px; }
+  .collection-discard-footer { align-items: flex-end; }
+  .collection-source-settings .collection-parallel-setting { grid-template-columns: minmax(0, 1fr) auto; }
+  .collection-source-settings .collection-parallel-copy { grid-column: auto; }
+}

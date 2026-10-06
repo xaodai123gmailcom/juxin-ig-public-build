@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>OFFLINE synthetic Reels safety fixture</title>
+<style>
+body{margin:0;background:#090909;color:#fff;font:15px Arial}header{padding:18px 30px;border-bottom:1px solid #333}main{display:flex;justify-content:center;padding:20px}article{position:relative;width:390px;height:530px}video{width:310px;height:510px;object-fit:cover;border-radius:14px}nav{position:absolute;left:324px;bottom:70px;display:grid;gap:17px}button{background:transparent;border:0;color:white;cursor:pointer;padding:6px;width:46px;height:46px}svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:2}button[aria-label=Unlike] svg{fill:#ff3040;stroke:#ff3040}.caption{position:absolute;bottom:40px;left:15px}a{color:white;text-decoration:none}#next{position:fixed;right:30px;top:46%;border:1px solid #aaa;border-radius:50%}.notice{color:#aaa;font-size:12px}
+</style><header>Instagram · Reels <span class="notice">OFFLINE SYNTHETIC TEST ONLY</span></header>
+<main><article id="reel"><video autoplay muted playsinline></video><nav>
+<button id="heart" aria-label="Like"><svg aria-label="Like" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/></svg></button>
+<button id="comment" aria-label="Comment"><svg viewBox="0 0 24 24"><path d="M21 11a9 9 0 1 0-4 8l5 2-1-6Z"/></svg></button>
+<button id="follow" aria-label="Follow">＋</button></nav>
+<div class="caption"><a id="permalink" href="/reel/FIXTURE_A/">synthetic_creator · original audio</a><p>Local canvas video, no account or network</p></div></article></main>
+<button id="next" aria-label="Next reel">↓</button>
+<script>
+window.stats={likes:0,unlikes:0,comments:0,follows:0,next:0,trusted:[]};
+window.setLiked=(value)=>{const label=value==='unknown'?'Heart':value?'Unlike':'Like';heart.setAttribute('aria-label',label);heart.querySelector('svg').setAttribute('aria-label',label)};
+window.showReel=(key,liked=false)=>{permalink.href='/reel/'+key+'/';setLiked(liked)};
+heart.onclick=e=>{stats.trusted.push(e.isTrusted);if(heart.getAttribute('aria-label')==='Unlike'){stats.unlikes++;setLiked(false)}else{stats.likes++;if(!window.ambiguous)setLiked(true)}};
+comment.onclick=()=>stats.comments++;follow.onclick=()=>stats.follows++;
+next.onclick=()=>{stats.next++;showReel(window.nextKey||'FIXTURE_B',false)};
+const canvas=document.createElement('canvas');canvas.width=310;canvas.height=510;
+const ctx=canvas.getContext('2d');let frame=0;
+function paint(){const g=ctx.createLinearGradient(0,0,310,510);g.addColorStop(0,'#224957');g.addColorStop(1,'#a66b50');ctx.fillStyle=g;ctx.fillRect(0,0,310,510);ctx.fillStyle='#e9caa1';ctx.beginPath();ctx.arc(155,170+Math.sin(frame++/30)*8,70,0,Math.PI*2);ctx.fill();ctx.fillStyle='white';ctx.font='22px Arial';ctx.fillText('Synthetic Reel',77,330);requestAnimationFrame(paint)}paint();
+const video=document.querySelector('video');video.srcObject=canvas.captureStream(25);video.play();
+</script></html>

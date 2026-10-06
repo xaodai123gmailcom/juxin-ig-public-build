@@ -1,0 +1,24 @@
+.report-data-overview { display: grid; gap: 15px; min-width: 0; }
+.report-data-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.report-data-toolbar > p { flex: 1 1 280px; margin: 0; color: #a3b5ce; font-size: 12px; line-height: 1.8; }
+.report-data-toolbar > button { flex: 0 1 auto; max-width: 100%; white-space: normal; }
+.report-data-toolbar > button:focus-visible { outline: 2px solid #98cfff; outline-offset: 3px; }
+.report-data-overview .formal-error-banner { margin: 0; overflow-wrap: anywhere; }
+.report-data-counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.report-data-counters > div { min-width: 0; padding: 13px 15px; border: 1px solid #30445e; border-radius: 10px; background: #111d2e; }
+.report-data-counters dt { color: #aabbd2; font-size: 12px; line-height: 1.7; }
+.report-data-counters dd { margin: 6px 0 0; color: #dce7f5; font-size: 21px; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.report-data-tables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 14px; min-width: 0; }
+.report-data-panel { min-width: 0; overflow: hidden; border: 1px solid #30445e; border-radius: 11px; background: #101b2c; }
+.report-data-panel h3 { margin: 0; padding: 14px 16px; border-bottom: 1px solid #30445e; color: #d6e1f2; font-size: 14px; line-height: 1.6; }
+.report-data-table-scroll { max-height: 380px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.report-data-panel table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.6; }
+.report-data-panel th, .report-data-panel td { padding: 10px 14px; border-bottom: 1px solid #283950; text-align: left; overflow-wrap: anywhere; }
+.report-data-panel th { position: sticky; top: 0; color: #a5b8d2; background: #172438; font-weight: 500; }
+.report-data-panel td { color: #c2d0e3; }
+.report-data-panel th:last-child, .report-data-panel td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.report-data-panel tbody tr:last-child td { border-bottom: 0; }
+.report-data-state { margin: 0; padding: 16px; color: #9aafcb; font-size: 12px; line-height: 1.7; }
+@media (max-width: 850px) { .report-data-tables { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .report-data-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 360px) { .report-data-counters { grid-template-columns: minmax(0, 1fr); } }

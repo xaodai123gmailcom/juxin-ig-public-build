@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "description": "Pinned Intel Open Model Zoo 2023.0 FP16 assets used by the local person classifier.",
+  "license": {
+    "spdx": "Apache-2.0",
+    "file": "LICENSE",
+    "url": "https://raw.githubusercontent.com/openvinotoolkit/open_model_zoo/master/LICENSE"
+  },
+  "files": [
+    {
+      "model": "face-detection-retail-0004",
+      "precision": "FP16",
+      "filename": "face-detection-retail-0004.xml",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/face-detection-retail-0004/FP16/face-detection-retail-0004.xml",
+      "size": 143827,
+      "sha384": "a7f8d1d41998503c4f3cdd8c12275f04f1736e5142127edcb4c76c3e17188499390574095a5b2a9dd78d3d0f77d02034"
+    },
+    {
+      "model": "face-detection-retail-0004",
+      "precision": "FP16",
+      "filename": "face-detection-retail-0004.bin",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/face-detection-retail-0004/FP16/face-detection-retail-0004.bin",
+      "size": 1176544,
+      "sha384": "394185d3e42c34d7f9d43229ec8f5755c07e19fd6469d23883e71707fdd8eb66d90cbd62248db90ff3ba1c94adac599b"
+    },
+    {
+      "model": "age-gender-recognition-retail-0013",
+      "precision": "FP16",
+      "filename": "age-gender-recognition-retail-0013.xml",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.xml",
+      "size": 43414,
+      "sha384": "a3c4c149f644a8cbcf81fb9fe5c9eb2500c5a102c6dea8ed9ef748eb60e07a0205371d5a839f26592848433971ea8547"
+    },
+    {
+      "model": "age-gender-recognition-retail-0013",
+      "precision": "FP16",
+      "filename": "age-gender-recognition-retail-0013.bin",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/age-gender-recognition-retail-0013/FP16/age-gender-recognition-retail-0013.bin",
+      "size": 4276038,
+      "sha384": "667b71d543f455e5683c70de8ae6db303e8c2362b1e25d3b2539a2ce80bb689ccedefb79b2111b0b8cb6dafcbb2cc5b4"
+    },
+    {
+      "model": "person-detection-retail-0013", "precision": "FP16",
+      "filename": "person-detection-retail-0013.xml",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-detection-retail-0013/FP16/person-detection-retail-0013.xml",
+      "size": 571233,
+      "sha384": "99ad3d4580a0123bef05ff77b6f46ccec16de974d1f5699fb94cd842e3242c6aa641f4977f9a5bb2f0fab42fe51cbb63"
+    },
+    {
+      "model": "person-detection-retail-0013", "precision": "FP16",
+      "filename": "person-detection-retail-0013.bin",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-detection-retail-0013/FP16/person-detection-retail-0013.bin",
+      "size": 1445734,
+      "sha384": "a67422e3b5ec76057651d2a0237eab862de00e968c7eef1e5f333849ae64f91900bcd30a23e1b7dbaa07313e358759b9"
+    },
+    {
+      "model": "person-attributes-recognition-crossroad-0230", "precision": "FP16",
+      "filename": "person-attributes-recognition-crossroad-0230.xml",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-attributes-recognition-crossroad-0230/FP16/person-attributes-recognition-crossroad-0230.xml",
+      "size": 261058,
+      "sha384": "f19161f53f7c03c8fee3305b2c55d8de3f795b5e0466ea637b0e24c63de76af61ebcff95ea157bf293a9575e4c64c278"
+    },
+    {
+      "model": "person-attributes-recognition-crossroad-0230", "precision": "FP16",
+      "filename": "person-attributes-recognition-crossroad-0230.bin",
+      "url": "https://storage.openvinotoolkit.org/repositories/open_model_zoo/2023.0/models_bin/1/person-attributes-recognition-crossroad-0230/FP16/person-attributes-recognition-crossroad-0230.bin",
+      "size": 1469624,
+      "sha384": "5a8080bf4a15fff1b6f43eb4fce43682346bc0cf6842fa183739b50cc50098e657fd0917a36ed9891309416a56d832f9"
+    }
+  ]
+}

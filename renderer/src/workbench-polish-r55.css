@@ -1,0 +1,165 @@
+/* r55 application chrome. Loaded after the workspace styles; native web contents,
+   task geometry, row sizing and page-specific review layout remain untouched. */
+:root {
+  --ui-bg: #0b1423;
+  --ui-panel: #122033;
+  --ui-surface-raised: #1c2d44;
+  --ui-surface-inset: #0c1829;
+  --ui-border: #344c66;
+  --ui-border-soft: #2a4059;
+  --ui-text: #edf4ff;
+  --ui-text-soft: #c9d7e9;
+  --ui-muted: #afc0d6;
+  --ui-accent: #c3b0ff;
+  --ui-mint: #8be3cd;
+  --ui-focus: #9af0dc;
+}
+
+.formal-shell {
+  background: linear-gradient(125deg, #12223a 0, #0b1423 42%, #0d1b2b 100%);
+  color: var(--ui-text);
+}
+.formal-rail {
+  background: linear-gradient(180deg, #102139, #0b1626 55%, #101d2e);
+  border-color: #354860;
+  box-shadow: inset -1px 0 #a8c9ef07;
+}
+.formal-brand { box-shadow: 0 3px 12px #02091450, 0 0 0 1px #8ec3fa30; }
+.formal-nav a[data-nav] { transition: background-color 120ms ease, border-color 120ms ease; }
+.formal-nav a[data-nav][aria-current="page"] {
+  background: linear-gradient(115deg, color-mix(in srgb, var(--nav-accent) 23%, #142338), #172538);
+  border-color: color-mix(in srgb, var(--nav-accent) 56%, #35465d);
+  box-shadow: inset 3px 0 var(--nav-accent), inset 0 1px #ffffff0b;
+}
+.formal-header {
+  background: linear-gradient(105deg, #162a43, #111e31 62%, #152a3b);
+  border-color: #3a536d;
+  box-shadow: 0 3px 12px #020a151c;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.formal-header h1 { color: #f6f9ff; letter-spacing: -.025em; }
+.formal-header p { color: #bdd0e5; }
+.formal-live, .formal-chip {
+  color: #d4e3f4;
+  border-color: #45617b;
+  background: #14283b;
+  box-shadow: inset 0 1px #ffffff08;
+}
+.formal-live { border-color: #3c6b69; background: #153237; }
+.formal-live.is-offline { border-color: #775260; background: #342634; }
+
+/* A brighter title band, ink body and colored icons create hierarchy without
+   decorative overlays or effects over the embedded browser surface. */
+.formal-panel {
+  background: #122033;
+  border-color: #3a506b;
+  box-shadow: 0 4px 14px #020a161f, inset 0 1px #c9dcff07;
+}
+.formal-panel-header {
+  background: linear-gradient(100deg, #21344e, #1a2a40 65%, #1b3441);
+  border-color: #425973;
+  box-shadow: inset 0 1px #ffffff07;
+}
+.formal-panel-title h2, .studio-panel h2 { color: #f2f7ff; }
+.formal-panel-title p { color: #b1c5de; }
+.formal-panel-title > span:first-child {
+  color: #d5c4ff;
+  background: linear-gradient(145deg, #3b3356, #2b2e4b);
+  border-color: #6b5b8c;
+  box-shadow: inset 0 1px #e7dbff12;
+}
+.formal-selected-count { color: #e8dcff; background: #363052; border-color: #9c84d0; }
+
+.formal-stat {
+  --stat-tint: #a28bdc;
+  --stat-surface: #292942;
+  border-color: #465779;
+  background: linear-gradient(115deg, var(--stat-surface), #14243a 85%);
+  box-shadow: inset 0 2px var(--stat-tint), 0 3px 10px #050c161c;
+}
+.formal-stat:nth-child(4n + 2) { --stat-tint: #73cdb8; --stat-surface: #1c343b; }
+.formal-stat:nth-child(4n + 3) { --stat-tint: #80b6e7; --stat-surface: #22354b; }
+.formal-stat:nth-child(4n + 4) { --stat-tint: #d8b579; --stat-surface: #32333b; }
+.formal-stat small { color: #c0cfe3; }
+.formal-stat strong { color: #f6f9ff; text-shadow: 0 1px 0 #00000020; }
+.formal-stat .formal-stat-icon { box-shadow: inset 0 0 0 1px #e1cfff18; }
+
+.formal-button {
+  color: #e0ebf9;
+  background: linear-gradient(180deg, #263b53, #1b2d43);
+  border-color: #546d88;
+  box-shadow: inset 0 1px #ffffff0a;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.formal-button:hover:not(:disabled) {
+  color: #fff;
+  background: #304963;
+  border-color: #91adc9;
+  transform: none;
+}
+.formal-button.primary { background: linear-gradient(120deg, #8064d2, #6455ac); border-color: #af99ec; color: #fff; }
+.formal-button.primary:hover:not(:disabled) { background: #8a6ddb; border-color: #d0bfff; }
+.formal-button.success { background: linear-gradient(120deg, #1b5148, #1b393c); border-color: #559985; color: #b1f3dc; }
+.formal-button.success:hover:not(:disabled) { background: #286352; border-color: #94d5b8; }
+.formal-button.warning { background: linear-gradient(120deg, #4e3d25, #3c352d); border-color: #ad8c4f; color: #ffe0a6; }
+.formal-button.warning:hover:not(:disabled) { background: #655030; border-color: #d5b471; }
+.formal-button.danger { background: linear-gradient(120deg, #4b2b3c, #3d2e3d); border-color: #b17187; color: #ffd0dc; }
+.formal-button.danger:hover:not(:disabled) { background: #63344b; border-color: #df99b0; }
+.formal-button:disabled { background: #192639; border-color: #3c5069; color: #9fb0c7; box-shadow: none; }
+.formal-input, .formal-select, .formal-textarea {
+  color: #f0f6ff;
+  background: #0e1c2e;
+  border-color: #4b647f;
+  box-shadow: inset 0 1px 3px #020c1733;
+}
+.formal-input::placeholder, .formal-textarea::placeholder { color: #a1b4cd; }
+.formal-field > span, .studio-panel .formal-field > span { color: #c0d0e5; }
+.formal-input:focus, .formal-select:focus, .formal-textarea:focus {
+  border-color: #a6a1de;
+  box-shadow: 0 0 0 2px #b7a0f322;
+}
+.formal-check { color: #d4e1f0; }
+
+.formal-row, .studio-job { background: linear-gradient(120deg, #17273d, #132238); border-color: #3c5471; }
+.formal-row.is-selected { background: linear-gradient(100deg, #37304d, #222a42); border-color: #b19bda; }
+.formal-row.is-locked { background: #2b2b35; border-color: #8e7756; }
+.formal-row-main small, .studio-job small { color: #b0c3db; }
+.formal-row-main .formal-window-counts { color: #9ce7d1; }
+.formal-row-main .formal-window-lock { color: #f6d398; }
+.collection-task-progress { background: #0e1d30; border-color: #496782; }
+.formal-empty, .studio-empty { background: #102237; border-color: #506983; color: #b6c9df; }
+.formal-history-table th, .studio-table th, .report-table-scroll th {
+  color: #dce9f8;
+  background: #20364f;
+  border-color: #486581;
+}
+.formal-history-table td, .studio-table td { border-color: #354c66; color: #d9e5f5; }
+.formal-history-table tbody tr:nth-child(even), .studio-table tbody tr:nth-child(even) { background: #192b41; }
+.formal-history-table tbody tr:hover, .formal-history-table tbody tr:focus-within,
+.studio-table tbody tr:hover, .studio-table tbody tr:focus-within { background: #27415a; }
+
+/* Sidebar paint only: never change account viewport bounds, positioning or input. */
+.account-sidebar { background: linear-gradient(180deg, #13243a, #101e30); border-color: #3a516c; }
+.account-sidebar-search { background: #0f1e31; border-color: #4c6681; }
+.account-sidebar-item.active, .account-sidebar-item.active:hover {
+  background: linear-gradient(105deg, #3a3052, #252b43);
+  border-color: #bba1e8;
+  box-shadow: inset 3px 0 #bca1e8;
+}
+.account-task-watch-toolbar { background: #1c3a4a; border-color: #53758b; }
+.account-task-tabs { background: #162a42; border-color: #44617f; }
+
+.report-definition, .report-periods { background: #14283c; border-color: #496780; }
+.report-card, .report-history-total { box-shadow: 0 4px 14px #020b171c, inset 0 1px #ffffff08; }
+.home-guide-card { background: linear-gradient(145deg, #1d2d44, #152338); border-color: #4a5e7b; border-top-color: var(--tint); box-shadow: 0 5px 14px #040b161c; }
+.home-guide-card p, .home-guide-heading > span, .home-footer { color: #bbcee4; }
+.formal-modal { background: #16283e; border-color: #8a79ac; }
+.formal-modal-header { background: #243952; border-color: #526780; }
+.formal-modal-footer { background: #122338; border-color: #526780; }
+
+/* Native browser layers do not inherit CSS. No animation, image fetch, blur or
+   layout resize is introduced by this theme. */
+@media (prefers-reduced-motion: reduce) {
+  .formal-button, .formal-nav a[data-nav] { transition: none; }
+}

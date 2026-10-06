@@ -1,0 +1,84 @@
+.juxin-home {
+  max-width: 1720px;
+  margin: auto;
+  padding: 28px clamp(18px, 3.4vw, 56px) 24px;
+  color: var(--ui-text, #e6edf8);
+}
+.home-hero {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  min-height: 424px;
+  padding: 42px 44px 70px;
+  overflow: hidden;
+  border: 1px solid #354668;
+  border-radius: 24px;
+  background: radial-gradient(ellipse at 8% 0%, #6353aa35, transparent 62%), radial-gradient(ellipse at 95% 100%, #20958b26, transparent 58%), #111c30;
+  box-shadow: 0 12px 32px #02071626;
+}
+.home-hero-copy { position: relative; z-index: 2; min-width: 0; }
+.home-eyebrow { display: flex; align-items: center; gap: 10px; color: #bcb5e9; font-size: 11px; line-height: 1.7; letter-spacing: .2em; }
+.home-eyebrow > span { flex: 0 0 6px; height: 6px; border-radius: 50%; background: #71d8c7; }
+.home-hero h1 { margin: 22px 0 14px; font-size: clamp(42px, 5.8vw, 78px); line-height: 1.16; letter-spacing: .055em; font-weight: 750; color: #eff3ff; }
+.home-tagline { margin: 0 0 26px; color: #b9c9df; font-size: clamp(18px, 1.85vw, 25px); line-height: 1.9; letter-spacing: .08em; }
+.home-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.home-hero-actions a { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 44px; text-decoration: none; font-size: 14px; line-height: 1.5; }
+.home-primary { padding: 11px 18px; border: 1px solid #9986ef; border-radius: 11px; background: linear-gradient(115deg, #795ce3, #6359cb); color: #fff; font-weight: 650; }
+.home-primary:hover { background: #8066e4; border-color: #b3a1ff; }
+.home-secondary { padding: 11px 8px; border-radius: 9px; color: #c9d7e9; }
+.home-secondary:hover { color: #fff; background: #ffffff08; }
+.juxin-home a:focus-visible { outline: 2px solid #89c9ff; outline-offset: 4px; border-radius: 9px; }
+.home-world { position: relative; display: grid; place-items: center; min-width: 0; min-height: 280px; }
+.home-globe { width: 264px; height: 264px; border: 1px solid #7c8cc742; border-radius: 50%; background: radial-gradient(circle at 35% 24%, #9686d333, #43adad0f 55%, #0c344655); box-shadow: inset 0 0 40px #96b8dc20; transform: rotate(-18deg); }
+.home-globe svg { width: 100%; height: 100%; color: #9eb9d5; }
+.home-world-orbit { position: absolute; width: 324px; height: 324px; border: 1px solid #b5adcf33; border-radius: 50%; transform: rotate(-25deg) scaleY(.52); }
+.home-world-orbit.orbit-two { width: 342px; height: 342px; transform: rotate(58deg) scaleY(.65); border-color: #67d4c438; }
+.home-world-label { position: absolute; display: flex; align-items: center; gap: 9px; padding: 9px 15px; border: 1px solid #4d627e; border-radius: 24px; background: #15253b; font-size: 12px; }
+.label-one { top: 22px; right: 8%; color: #cebefc; border-color: #625486; }
+.label-two { left: 3%; bottom: 59px; color: #e3c19f; border-color: #725e50; }
+.label-three { right: 1%; bottom: 26px; color: #a1e6d8; border-color: #3f716e; }
+.home-world-coordinate { position: absolute; bottom: -26px; color: #93acbd; font-size: 9px; letter-spacing: .22em; }
+.home-hero-bottom { position: absolute; bottom: 0; inset-inline: 0; display: flex; justify-content: space-between; gap: 10px; padding: 15px 28px; border-top: 1px solid #5d769433; background: #0b142655; color: #aabbd2; font-size: 11px; line-height: 1.6; }
+.home-hero-bottom > span:last-child { font-size: 9px; letter-spacing: .18em; }
+.home-guide { margin-top: 28px; scroll-margin-top: 20px; }
+.home-guide-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.home-guide-heading h2 { margin: 0; font-size: 21px; line-height: 1.5; letter-spacing: .03em; }
+.home-guide-heading > span { flex-shrink: 0; color: #9aacc6; font-size: 12px; }
+.home-guide-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.home-guide-card { --accent: #c5b5fb; --tint: #7760b9; display: flex; flex-direction: column; min-width: 0; padding: 22px; border: 1px solid #35415a; border-top-color: var(--tint); border-radius: 15px; background: #111c2e; }
+.home-guide-card.teal { --accent: #94dfd0; --tint: #347f78; }
+.home-guide-card.rose { --accent: #eeb8cc; --tint: #97586f; }
+.home-guide-card.amber { --accent: #e7c79b; --tint: #917048; }
+.home-guide-card:focus-within { border-color: var(--tint); background: #162237; }
+.home-guide-card-top { display: flex; align-items: center; justify-content: space-between; color: var(--accent); }
+.home-guide-card-top > span { font-size: 22px; font-weight: 500; opacity: .75; font-variant-numeric: tabular-nums; }
+.home-guide-card h3 { margin: 20px 0 9px; font-size: 16px; line-height: 1.6; }
+.home-guide-card p { margin: 0 0 20px; color: #aabbd0; font-size: 13px; line-height: 1.85; overflow-wrap: anywhere; }
+.home-guide-card a { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; min-height: 36px; padding-top: 12px; border-top: 1px solid #2d3a50; color: var(--accent); text-decoration: none; font-size: 13px; }
+.home-guide-card a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.home-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 22px 2px 0; color: #91a3bb; font-size: 11px; line-height: 1.6; letter-spacing: .06em; }
+@media (max-width: 1150px) {
+  .home-hero { min-height: 390px; padding: 34px 28px 66px; }
+  .home-globe { width: 225px; height: 225px; }
+  .home-world-orbit, .home-world-orbit.orbit-two { width: 280px; height: 280px; }
+  .home-guide-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .juxin-home { padding: 20px 14px; }
+  .home-hero { grid-template-columns: minmax(0, 1fr); min-height: 0; padding: 28px 22px 66px; border-radius: 18px; }
+  .home-world { display: none; }
+  .home-hero h1 { font-size: clamp(36px, 8vw, 48px); }
+  .home-hero-bottom { padding-inline: 22px; }
+  .home-hero-bottom > span:last-child { display: none; }
+  .home-guide-grid { gap: 12px; }
+  .home-guide-card { padding: 18px; }
+  .home-guide-heading h2 { font-size: 18px; }
+}
+@media (max-width: 460px) {
+  .home-guide-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-guide-heading { align-items: flex-start; flex-wrap: wrap; }
+  .home-hero-actions { align-items: stretch; }
+  .home-primary { width: 100%; }
+  .home-eyebrow { font-size: 10px; letter-spacing: .13em; }
+}

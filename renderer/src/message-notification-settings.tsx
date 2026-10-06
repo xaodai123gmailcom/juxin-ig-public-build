@@ -1,0 +1,9 @@
+import {useEffect,useState} from 'react';
+type Settings={enabled:boolean;supported:boolean;error?:string;lastShownAt?:number};
+export function MessageNotificationSettings(){
+ const [value,setValue]=useState<Settings|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ const api=window.collectorCore?.messageNotifications;
+ useEffect(()=>{let live=true,running=false;const read=async()=>{if(!api||running)return;running=true;try{const v=await api({});if(live)setValue(v)}catch{if(live)setMessage('消息提醒设置读取失败')}finally{running=false}};void read();const timer=setInterval(()=>void read(),2000);return()=>{live=false;clearInterval(timer)}},[api]);
+ async function update(input:{enabled?:boolean;test?:boolean}){if(!api||busy)return;setBusy(true);setMessage('');try{const v=await api(input);setValue(v);setMessage(input.test?'已请求发送测试提醒；若未弹出，请检查 Windows 通知设置和勿扰模式。':v.enabled?'已开启消息提醒':'已关闭消息提醒')}catch(e){setMessage(String(e))}finally{setBusy(false)}}
+ return <section className="formal-panel" style={{marginBottom:20}} aria-label="消息提醒设置"><div className="formal-panel-body"><h3>消息提醒</h3><label style={{display:'flex',alignItems:'center',gap:12,margin:'16px 0'}}><input type="checkbox" role="switch" aria-label="系统消息提醒" checked={value?.enabled||false} disabled={busy||!value} onChange={e=>void update({enabled:e.target.checked})}/><strong>系统消息提醒</strong><span>{value?.enabled?'已开启':'已关闭'}</span></label><button className="formal-button" disabled={busy||!value?.enabled||!value.supported} onClick={()=>void update({test:true})}>发送测试提醒</button>{!api&&<p role="status">请使用新版桌面程序设置系统提醒。</p>}{value&&!value.supported&&<p role="status">当前环境不支持系统通知。</p>}{Boolean(value?.lastShownAt)&&<p className="account-footnote">系统已接收最近一次提醒：{new Date(value!.lastShownAt!).toLocaleTimeString()}</p>}{value?.error&&<p role="alert">{value.error}</p>}{message&&<p role="status">{message}</p>}</div></section>
+}

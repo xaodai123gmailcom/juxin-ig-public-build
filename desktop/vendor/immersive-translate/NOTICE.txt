@@ -1,0 +1,26 @@
+Optional Immersive Translate integration
+
+This public source and installer DO NOT include the proprietary vendor userscript.
+The adjacent host.html and desktop/src/immersive-* adapters are first-party code.
+
+Official homepage: https://immersivetranslate.com/
+Supported user-provided userscript version: 1.33.1
+Required SHA-256: 9ec40a25e5fd479a4c4a460905ba0bc25b888469f781c74df5e90016bec4ac81
+
+Users must obtain the original supported script themselves from an authorized
+vendor distribution, subject to the vendor's terms. In an account's translation
+settings, choose “导入官方脚本文件” and select that local file. The application
+verifies its pinned SHA-256 before storing it in the current local application
+data directory under optional-integrations/immersive-translate.user.js.
+No automatic download, unknown-script execution, installation or paid signup occurs.
+Missing, incompatible or modified files leave translation unavailable with a
+clear message. Collection, posting and account nurture remain available.
+After import, explicitly enable translation and configure the desired provider.
+Any vendor prompts, account access, API settings and charges remain the user's choice.
+
+Only copied plain chat text enters a separate isolated translation document;
+account cookies and task handles never enter the adapter. The application does
+not install a Chrome Web Store extension or claim vendor endorsement.
+Public native tests use a first-party synthetic adapter and real Electron IPC;
+they test adapter lifecycle/isolation, not proprietary vendor behavior or online
+translation quality. Users may validate the optional supported script separately.

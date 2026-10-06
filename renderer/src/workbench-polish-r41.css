@@ -1,0 +1,206 @@
+/* r41 visual layer. Keep native account view geometry and task controls unchanged.
+   These rules style application surfaces, never the embedded web page. */
+:root {
+  --ui-bg: #0b1220;
+  --ui-panel: #111c2d;
+  --ui-surface-raised: #19273b;
+  --ui-surface-inset: #0d1727;
+  --ui-border: #33465f;
+  --ui-border-soft: #283b53;
+  --ui-text: #eaf0fa;
+  --ui-text-soft: #c8d4e5;
+  --ui-muted: #a7b6cc;
+  --ui-accent: #b5a0ed;
+  --ui-mint: #83dfc5;
+  --ui-focus: #99efdb;
+  --ui-danger: #ffc0ca;
+  --ui-warning: #f1d29d;
+}
+
+/* Shell and section hierarchy; dimensions remain in their original stylesheets. */
+.formal-shell { background: var(--ui-bg); color: var(--ui-text); }
+.formal-rail { background: #0d1625; border-color: var(--ui-border-soft); }
+.formal-header { background: #111c2d; border-color: var(--ui-border); }
+.formal-header h1 { color: #f3f6fc; }
+.formal-header p, .formal-panel-title p { color: var(--ui-muted); }
+.formal-live, .formal-chip {
+  background: #17253a;
+  border-color: #3a4c66;
+  color: #d1dcec;
+}
+.formal-panel {
+  background: var(--ui-panel);
+  border-color: var(--ui-border);
+  box-shadow: 0 2px 8px #02081214;
+}
+.formal-panel-header {
+  background: var(--ui-surface-raised);
+  border-color: var(--ui-border);
+}
+.formal-panel-title h2 { color: #eef3fb; font-weight: 650; }
+.formal-panel-title > span:first-child {
+  background: #302943;
+  border-color: #53466c;
+  color: #d8c9fa;
+}
+.formal-stat { background: #142136; border-color: #374b66; }
+.formal-stat small { color: #aebed4; }
+.formal-stat strong { color: #f3f6fc; }
+.formal-selected-count { background: #2b2542; border-color: #8068ad; color: #e2d7fa; }
+
+/* Clear control states without moving targets while users click. */
+.formal-button {
+  background: #1a2a40;
+  border-color: #4b607b;
+  color: #dce6f4;
+  box-shadow: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.formal-button:hover:not(:disabled) {
+  transform: none;
+  background: #243850;
+  border-color: #8199b6;
+  color: #f3f7fc;
+}
+.formal-button.primary { background: #6851b7; border-color: #a28adf; color: #fff; }
+.formal-button.primary:hover:not(:disabled) { background: #7962c7; border-color: #c3aff5; }
+.formal-button.success { background: #153c34; border-color: #3c8572; color: #a2ead4; }
+.formal-button.success:hover:not(:disabled) { background: #215346; border-color: #80c4aa; }
+.formal-button.warning { background: #3c3020; border-color: #8d7044; color: #f7d9a3; }
+.formal-button.warning:hover:not(:disabled) { background: #50412b; border-color: #c7a674; }
+.formal-button.danger { background: #3b2632; border-color: #9a5d70; color: #ffc0cd; }
+.formal-button.danger:hover:not(:disabled) { background: #532e3e; border-color: #d395a7; }
+.formal-button:disabled {
+  background: #172233;
+  border-color: #33465f;
+  color: #92a3bb;
+}
+.formal-button:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 3px;
+}
+.formal-field > span, .studio-panel .formal-field > span { color: #b8c7dc; }
+.formal-input, .formal-select, .formal-textarea {
+  background: var(--ui-surface-inset);
+  color: #edf3fc;
+  border-color: #4b607b;
+  caret-color: #c2b1ef;
+}
+.formal-input::placeholder, .formal-textarea::placeholder { color: #98abc4; opacity: 1; }
+.formal-input:focus, .formal-select:focus, .formal-textarea:focus {
+  border-color: #a99bda;
+  box-shadow: 0 0 0 2px #ad9ae526;
+}
+.formal-input:focus-visible, .formal-select:focus-visible, .formal-textarea:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+.formal-input[aria-invalid="true"], .formal-textarea[aria-invalid="true"] { border-color: #ee97ad; }
+.formal-check { color: #cbd8e9; }
+.formal-option-grid .formal-check { background: #112033; border-color: #3a516d; }
+.formal-option-grid .formal-check:has(input:checked) { background: #292640; border-color: #8d78b8; }
+
+/* Lists share the same quiet surface; selected, locked and warning rows retain
+   their explicit states instead of inheriting a generic hover highlight. */
+.formal-row, .studio-job { background: #121f32; border-color: #354b67; }
+.formal-row:not(.is-selected):not(.is-locked):not(.has-runtime-warning):focus-within,
+.studio-job:focus-within { border-color: #869fbb; }
+.formal-row.is-selected { background: #2a2540; border-color: #a08bd2; }
+.formal-row.is-locked { background: #26242e; border-color: #79664e; }
+.formal-row-main small { color: #a6b7cf; }
+.formal-row-main .formal-window-counts { color: #91e0c8; }
+.formal-row-main .formal-window-lock { color: #f0cf9a; }
+.collection-task-progress { background: #0e1a2c; border-color: #38506d; color: #c0cde0; }
+.formal-row-main .collection-runtime-detail { color: #accded; }
+.studio-job small { color: #aec0d8; }
+.studio-job p { color: #c5d3e5; }
+.formal-empty, .studio-empty { background: #101d2f; border-color: #465d78; color: #b3c2d7; }
+.formal-empty strong, .account-empty h3 { color: #edf3fc; }
+.account-empty p, .account-footnote { color: #aabbd2; }
+
+/* Status colors have the same meaning on collection, review, studio and history. */
+.formal-status { background: #253750; color: #d3deed; }
+.formal-status.success, .formal-status.running { background: #173d35; color: #a0ead5; }
+:where(#root) .formal-status.failed, :where(#root) .formal-status.danger { background: #482c38; color: #ffc0cd; }
+.formal-status.paused, .formal-status.warning { background: #413421; color: #f7d9a5; }
+.formal-error-banner, .studio-cleanup-error { background: #34222e; border-color: #996174; color: #ffd0da; }
+.formal-capacity-banner { background: #332c20; border-color: #806b46; color: #f4dba8; }
+.formal-capacity-banner strong { color: #ffeac5; }
+.studio-note, .studio-cleanup-ok { background: #15342e; border-color: #407c6a; color: #ade8d5; }
+.formal-notice { background: #1c2e45; border-color: #728cae; color: #e3edf9; }
+.formal-notice.is-error { background: #392532; border-color: #b1798b; color: #ffd0da; }
+
+/* Reading surfaces keep all column definitions, sticky positions and row sizes. */
+.formal-history-table th, .studio-table th, .quick-review-table-head {
+  background: #1a2b42;
+  border-color: #425977;
+  color: #c8d6e9;
+}
+.formal-history-table td, .studio-table td { border-color: #304761; color: #d5e0ef; }
+.formal-history-table tbody tr:nth-child(even), .studio-table tbody tr:nth-child(even) { background: #152337; }
+.formal-history-table tbody tr:hover, .formal-history-table tbody tr:focus-within,
+.studio-table tbody tr:hover, .studio-table tbody tr:focus-within { background: #20354d; }
+.quick-review-row { background: #121e30; border-color: #304660; }
+.quick-review-row:hover { background: #1a2c43; }
+.quick-review-row:has(.quick-review-select input:checked) { background: #302940; }
+.quick-review-batch-toolbar { background: #122035; border-color: #3c516c; }
+.quick-review-account small { color: #c4b6ea; }
+.formal-evidence-note { background: #26263d; border-color: #6b608a; color: #dcd5f0; }
+.formal-evidence-item { background: #112033; border-color: #3b526e; }
+.formal-evidence-item span { color: #b4c4da; }
+.formal-evidence-item strong { color: #edf2fa; }
+
+/* Accounts: only sidebar and task toolbar chrome; no viewport or badge rules. */
+.account-sidebar { background: #101c2d; border-color: #30455e; }
+.account-sidebar-search { background: #0d1829; border-color: #405570; }
+.account-sidebar-item:hover:not([aria-disabled=true]):not(.active) { background: #1b2c43; border-color: #536a87; }
+.account-sidebar-item.active, .account-sidebar-item.active:hover { background: #302941; border-color: #b09bd9; }
+.account-sidebar footer { border-color: #3a4f68; }
+.account-task-watch-toolbar { background: #1b3044; border-color: #425c76; }
+.account-task-watch-toolbar strong { color: #acebdf; }
+.account-task-tabs { background: #122136; border-color: #384e69; }
+.account-task-tabs button[aria-selected=true], .account-task-tabs button[aria-selected=true]:hover {
+  background: #584678;
+  border-color: #b39be3;
+  color: #f5efff;
+}
+
+/* Supporting workspaces use their established structure and page-specific accents. */
+.report-definition, .report-periods { background: #122035; border-color: #405571; }
+.report-table-scroll th { background: #1b2d45; color: #cfdded; }
+.report-table-scroll tfoot th { background: #20354e; color: #f0f5fc; }
+.report-definition, .report-table-scroll small { color: #b1c3da; }
+.home-guide-card { background: #142135; border-color: #3d506b; border-top-color: var(--tint); }
+.home-guide-card p, .home-guide-heading > span, .home-footer { color: #aebfd5; }
+.formal-modal { background: #132034; border-color: #7a689b; }
+.formal-modal-header { background: #1b2a42; border-color: #405672; }
+.formal-modal-footer { background: #111e31; border-color: #405672; }
+.formal-modal-header p, .formal-storage-safety-note { color: #b0c0d6; }
+.formal-history-details > summary:focus-visible { outline-color: var(--ui-focus); }
+
+/* The compact bottom rail must reserve only the settings item's own width.
+   Main destinations scroll within the remaining space, including 701–900px. */
+@media (max-width: 900px) {
+  .formal-rail { gap: 8px; }
+  .formal-rail > .formal-nav:not(.formal-nav-bottom) {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    align-self: stretch;
+    align-items: center;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .formal-rail > .formal-nav-bottom {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    padding-top: 0;
+  }
+  .formal-rail .formal-nav a { flex: 0 0 48px; min-height: 48px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .formal-button, .formal-nav a, .account-sidebar-item { transition: none; }
+}

@@ -1,0 +1,290 @@
+.account-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin-bottom:20px}.account-content{padding:20px}.account-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.account-actions .formal-button{min-height:40px}.account-filters{display:flex;gap:14px;margin-bottom:20px;align-items:end}.account-search{flex:1}.account-search>div{position:relative}.account-search svg{position:absolute;top:14px;left:12px;color:#8595ae}.account-search input{padding-left:37px}.account-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;max-height:690px;overflow:auto}.account-card{padding:18px;border:1px solid #2c3951;border-radius:14px;background:#101827;min-width:0}.account-card-locked{border-color:#4b3c6e;background:#171727}.account-card-top{display:flex;gap:11px;align-items:center}.account-avatar{display:grid;place-items:center;width:43px;height:43px;flex-shrink:0;border-radius:13px;background:#352854;color:#d0b6ff;font-weight:700}.account-card-title{flex:1;min-width:0}.account-card-title h3{margin:0 0 5px;font-size:16px;overflow-wrap:anywhere}.account-card small{color:#90a2bc;font-size:11px}.account-state{font-size:11px;padding:5px 9px;border-radius:16px;background:#27334a;white-space:nowrap}.account-state.locked{background:#49364f;color:#f0c8a7}.account-state.opened{background:#153d38;color:#74e1bf}.account-user{font-size:15px;font-weight:600;margin-bottom:6px;overflow-wrap:anywhere}.account-binding{color:#8d9eb5;font-size:12px;margin-top:0}.account-card-stats{display:grid;grid-template-columns:1fr 1fr;background:#0c1321;border-radius:10px;margin:16px 0;padding:12px}.account-card-stats strong{display:block;font-size:23px;margin-top:5px}.account-meta{display:flex;flex-direction:column;gap:8px;font-size:12px;color:#b4b9d7;margin-bottom:16px}.account-meta>span{display:flex;gap:6px;align-items:center}.account-notes{font-size:12px;color:#9eaec5;overflow-wrap:anywhere}.account-empty{padding:55px 15px;text-align:center;color:#9daec8}.account-empty svg{color:#b19bdf}.account-empty h3{color:#dde3f3}.account-empty p,.account-footnote{font-size:12px;line-height:1.7;color:#8a9db8}.account-history{margin-top:18px;padding:17px 20px}.account-history summary{cursor:pointer;font-weight:600}.account-history>div{max-height:270px;overflow:auto}.account-history p{display:flex;justify-content:space-between;gap:15px;font-size:12px;border-bottom:1px solid #293850;padding-bottom:12px}.account-history small{color:#93a3bc}.account-note{padding:12px 17px;color:#80e2bf;background:#17342e;border-radius:10px;margin-bottom:15px}.account-archive{margin-top:12px;padding-top:12px;border-top:1px solid #36415a;font-size:12px;display:grid;gap:10px}.account-overlay{position:fixed;inset:0;background:#050916bc;z-index:90;display:flex;justify-content:flex-end;backdrop-filter:none}.account-editor{width:min(640px,100%);height:100%;overflow:auto;background:#111a2a;border-left:1px solid #3a4662;padding:24px;box-shadow:none}.account-editor header{display:flex;justify-content:space-between;align-items:start;gap:12px;margin-bottom:24px}.account-editor h2{margin:0;font-size:23px}.account-editor header p{font-size:12px;color:#9cacc5}.account-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.account-editor .formal-field{margin-bottom:16px}.account-editor footer{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}.account-binding-picker h3{font-size:15px}.account-binding-list{max-height:260px;overflow:auto;margin:12px 0 18px;display:grid;gap:8px}.account-binding-list label{display:flex;gap:10px;align-items:center;border:1px solid #30415d;border-radius:10px;padding:12px;cursor:pointer}.account-binding-list label>span{flex:1}.account-binding-list label small{display:block;color:#8e9eb6;font-size:11px;margin-top:3px}.account-binding-list label.disabled{opacity:.5;cursor:not-allowed}.account-binding-list input{accent-color:#8b5cf6}.account-binding-list strong{font-size:13px}@media(max-width:1400px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:900px){.account-summary{grid-template-columns:1fr 1fr}.account-grid{grid-template-columns:1fr}.account-filters{flex-wrap:wrap}.account-search{min-width:100%}.account-form-grid{grid-template-columns:1fr}.account-history p{flex-wrap:wrap}}
+
+.account-platform{display:block;color:#bdace6;font-size:12px;margin-bottom:5px}.account-filters{flex-wrap:wrap}.account-cookie-input{font-family:monospace;overflow-wrap:anywhere;resize:vertical}
+/* Accounts only: the other workspaces and their task controls keep their layout. */
+.formal-content:has(>.account-docked-workspace){padding:0;gap:0}
+.account-docked-workspace{height:calc(100vh - 74px);min-height:550px;display:grid;grid-template-columns:218px minmax(0,1fr);overflow:hidden;background:#090e19}
+.account-sidebar{background:#101827;border-right:1px solid #29344b;display:flex;flex-direction:column;min-height:0;padding:14px 10px 12px;gap:12px}
+.account-sidebar>header{display:flex;align-items:center;justify-content:space-between;padding:0 5px}.account-sidebar>header strong{font-size:14px}.account-sidebar small{color:#8c9ab2;font-size:11px;font-weight:400}.account-icon-button{padding:6px!important;min-height:30px!important}
+.account-sidebar-search{display:flex;align-items:center;gap:7px;background:#090f1d;border:1px solid #2c3850;border-radius:8px;padding:7px 9px;color:#8595ae}.account-sidebar-search input{width:100%;min-width:0;background:none;border:0;color:#e9edf8;font-size:12px;outline:none}.account-sidebar button:not(.formal-button){font-family:inherit;color:inherit;cursor:pointer}.account-sidebar-search button,.account-sidebar footer button{background:none;border:0;padding:3px;color:#9da8bb;display:inline-flex}.account-sidebar-filters{display:grid;gap:7px}.account-sidebar-filters .formal-input{min-height:32px;font-size:11px;padding:6px}
+.account-sidebar-list{display:flex;flex-direction:column;overflow:auto;min-height:0;gap:7px;flex:1}.account-sidebar-item{position:relative;display:flex;align-items:flex-start;gap:10px;text-align:left;background:transparent;border:1px solid transparent;border-radius:10px;padding:12px 9px;width:100%}.account-sidebar-item:hover{background:#1a2234}.account-sidebar-item.active{border-color:#9970f7;background:#2d2345}.account-sidebar-identity{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}.account-sidebar-identity strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#edf0f8}.account-sidebar-identity small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.account-platform-icon{display:grid;place-items:center;background:#253047;border-radius:10px;width:36px;height:36px;flex:none;color:#d7c4ff}.account-platform-icon.instagram{background:linear-gradient(140deg,#8954d5,#c64097);color:#fff}.account-platform-icon.whatsapp{background:#157657;color:#dffcec}.account-sidebar-status{font-size:10px;display:flex;gap:4px;align-items:center;color:#95a5bf}.account-sidebar-status .online,.account-sidebar-status .offline{width:6px;height:6px;border-radius:50%;background:#55d5af}.account-sidebar-status .offline{background:#738099}.account-sidebar-status.locked{color:#e6bf83}.account-unread{font-size:10px;min-width:18px;padding:2px 4px;text-align:center;border-radius:12px;background:#8860ee;color:white;position:absolute;right:7px;bottom:12px}.account-sidebar-empty{font-size:12px;color:#96a4ba;text-align:center;padding:14px 4px}.account-sidebar footer{display:grid;gap:8px;border-top:1px solid #29354b;padding:12px 6px 0}.account-sidebar footer>span{font-size:11px;display:flex;gap:7px;align-items:center;color:#aeb9cd}.account-sidebar footer>div{display:flex;justify-content:space-between}
+.account-browser-workspace{display:flex;flex-direction:column;min-width:0;min-height:0}.account-browser-workspace>.account-note,.account-browser-workspace>.formal-error-banner{margin:8px 12px 0;font-size:12px;display:flex;gap:8px;justify-content:space-between;align-items:center}.account-browser-workspace>.account-note button,.account-browser-workspace>.formal-error-banner button{border:0;background:none;color:inherit;cursor:pointer}.account-browser-workspace>.account-archive{margin:0;padding:10px 16px;background:#231c2f}.account-browser-surface{flex:1;min-height:0;position:relative;background:#0c0f14;display:grid;place-items:center;overflow:hidden}.account-browser-placeholder{max-width:470px;text-align:center;color:#8c9bb2;padding:25px}.account-browser-placeholder>svg{color:#a890da}.account-browser-placeholder h3{font-size:17px;color:#dde5f5}.account-browser-placeholder p{font-size:12px;line-height:1.8}.account-browser-placeholder .formal-button{margin:auto}.account-utility{width:min(850px,90vw)}.account-utility .account-history{padding:0}.account-docked-workspace button:focus-visible{outline:2px solid #bc9bff;outline-offset:2px}
+@media(max-width:1300px){.account-docked-workspace{grid-template-columns:180px minmax(0,1fr)}.account-sidebar-item{gap:7px;padding:10px 5px}.account-platform-icon{width:31px;height:31px}}
+
+
+.account-context-menu{position:fixed;z-index:120;width:200px;padding:7px;border:1px solid #48526b;border-radius:10px;background:#151d2c;box-shadow:none;color:#e6eaf4;outline:none}
+.account-context-menu>strong{display:block;padding:5px 8px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#9faec5}
+.account-context-menu>small{display:block;padding:0 8px 7px;font-size:11px;color:#e6bf83}
+.account-context-menu>button{display:flex;align-items:center;gap:10px;padding:9px;width:100%;border:0;border-radius:6px;background:none;color:inherit;text-align:left;font-family:inherit;font-size:13px;cursor:pointer}
+.account-context-menu>button:hover:not(:disabled),.account-context-menu>button:focus-visible{background:#302646;outline:none}
+.account-context-menu>button:disabled{opacity:.4;cursor:not-allowed}.account-context-menu>button.danger{color:#ff9d9d;border-top:1px solid #303d55;margin-top:4px}
+.account-delete-overlay{align-items:center;justify-content:center}.account-delete-dialog{background:#111a2a;border:1px solid #39465e;border-radius:14px;width:min(470px,92vw);padding:24px}.account-delete-dialog h2{font-size:18px;overflow-wrap:anywhere}.account-delete-dialog p{color:#9eabc3;font-size:13px;line-height:1.8}.account-delete-dialog footer{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+.account-sidebar-item[aria-disabled=true]{cursor:not-allowed}
+
+.account-header-actions{flex:1;min-width:0;display:flex;justify-content:center}.account-batch-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.account-batch-toolbar .formal-button{white-space:nowrap;padding:7px 9px;font-size:12px}.account-window-select-row{display:flex;align-items:center;gap:5px}.account-window-select-row>.account-sidebar-item{flex:1;min-width:0}.account-window-select-row>input{accent-color:#9968ff;flex-shrink:0}.account-selection-tools{display:flex;gap:12px;font-size:11px}.account-selection-tools button{color:#c5b7ed;background:none;border:none;cursor:pointer}.account-batch-results{padding:8px 14px;font-size:12px;color:#bec9dc;max-height:170px;overflow:auto}.account-batch-results summary{cursor:pointer}.account-batch-results p{margin:7px 0}.account-batch-fallback{grid-column:1/-1;padding:8px}.account-docked-workspace:has(>.account-batch-fallback){grid-template-rows:auto minmax(0,1fr)}
+
+.account-config-fields{border:0;padding:0;margin:0;min-width:0}
+
+/* Compact list: all secondary details are available on the platform icon. */
+.account-sidebar-item{display:grid;grid-template-columns:36px minmax(0,1fr);gap:8px;align-items:center;padding:10px 9px;min-height:58px}.account-sidebar-identity{grid-column:2;gap:4px}.account-sidebar-item>.account-platform-icon{grid-column:1;grid-row:1}.account-sidebar-status{flex-wrap:wrap}.account-window-select-row{flex-shrink:0}
+
+.account-sidebar-header-buttons{display:flex;gap:5px}.account-sidebar-header-buttons .formal-button{display:inline-flex;align-items:center;justify-content:center}
+.account-docked-workspace.account-sidebar-collapsed{grid-template-columns:76px minmax(0,1fr)}
+.account-sidebar-collapsed>.account-sidebar{padding:12px 6px;gap:8px}
+.account-sidebar-collapsed .account-sidebar>header{justify-content:center;padding:0}
+.account-sidebar-collapsed .account-sidebar>header>strong,.account-sidebar-collapsed .account-sidebar-identity,.account-sidebar-collapsed .account-sidebar footer>span,.account-sidebar-collapsed .account-sidebar footer>small{display:none}
+.account-sidebar-collapsed .account-sidebar-header-buttons{flex-direction:column;align-items:center}
+.account-sidebar-collapsed .account-collapsed-search{align-self:center;display:inline-flex;align-items:center;justify-content:center}
+.account-sidebar-collapsed .account-sidebar-list{overflow-x:hidden}
+.account-sidebar-collapsed .account-sidebar-item{grid-template-columns:36px;justify-content:center;padding:6px 4px;min-height:50px;gap:0}
+.account-sidebar-collapsed .account-platform-icon{width:36px;height:36px}
+.account-sidebar-collapsed .account-sidebar footer{padding:10px 0 0}
+.account-sidebar-collapsed .account-sidebar footer>div{flex-direction:column;align-items:center;gap:12px}
+.account-sidebar-collapsed .account-sidebar-empty{font-size:10px;padding:8px 2px;overflow-wrap:anywhere}
+@media(max-width:1300px){.account-sidebar-item{grid-template-columns:31px minmax(0,1fr);column-gap:6px}}
+
+.account-task-watch{position:absolute;inset:0;display:flex;flex-direction:column;min-width:0}.account-task-watch-toolbar,.account-task-interference{display:flex;align-items:center;gap:10px;padding:8px 12px;color:#d5e0ef;background:#152035;font-size:12px;flex-wrap:wrap}.account-task-watch-toolbar span,.account-task-watch-toolbar small{color:#a8b7ce}.account-task-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#101827}.account-task-tabs button{border:1px solid #3b4962;border-radius:6px;background:#172238;color:#b8c6db;padding:6px 12px;cursor:pointer}.account-task-tabs button[aria-selected=true]{background:#704ee6;color:white}.account-task-watch-image{flex:1;min-height:0;min-width:0;border:0;background:#0c0f14;color:#a8b7ce;cursor:pointer;padding:0;overflow:hidden}.account-task-watch-image img{width:100%;height:100%;object-fit:contain;display:block}.account-task-watch-error{font-size:12px;color:#ffc0b7;margin:6px 12px}.account-task-interference{position:absolute;top:0;left:0;right:0;height:38px;box-sizing:border-box;flex-wrap:nowrap;justify-content:space-between}
+
+.account-task-live{position:relative;flex:1;min-height:150px}.account-task-live .account-task-watch-image{height:100%;width:100%}
+
+.account-create-options { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:24px 0 12px; }
+.account-create-options button { padding:26px 20px;display:flex;flex-direction:column;align-items:flex-start;gap:14px;border:1px solid #594977;border-radius:14px;background:linear-gradient(135deg,#2b2242,#171d2e);color:#ded1fc;cursor:pointer;text-align:left; }
+.account-create-options button:last-child { border-color:#32676b;background:linear-gradient(135deg,#193c40,#171d2e);color:#9ce0d4; }
+.account-create-options button:hover { filter:brightness(1.18); }.account-create-options strong{font-size:18px}.account-create-options span{font-size:12px;color:#a5b1c6}.account-batch-preview{padding:16px;background:#1d2940;border:1px solid #384967;border-radius:10px;display:grid;gap:10px;margin:12px 0;color:#c0cbde}
+@media(max-width:580px){.account-create-options{grid-template-columns:1fr}}
+
+/* Translation controls belong to the account editor, never the webpage viewport. */
+.chat-translation-settings{margin:20px 0;padding:18px;border:1px solid #3f4264;border-radius:12px;background:#141b2d;font-size:12px}
+.chat-translation-settings h3{margin:0 0 8px;color:#d5c2ff;font-size:15px}
+.chat-translation-settings fieldset{border:0;padding:0;margin:14px 0 0;min-width:0}
+.chat-translation-check{display:flex;align-items:center;gap:8px;margin:12px 0;font-weight:600;color:#e2e9f6}
+.chat-translation-check input{accent-color:#9d78f5}
+.chat-translation-settings input[type=color]{width:100%;height:38px;padding:4px;background:#0d1524;border:1px solid #39465f;border-radius:7px}
+.chat-translation-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.chat-translation-export{border-top:1px solid #303b53;margin-top:18px;padding-top:16px}
+.chat-translation-error{color:#fda4af;overflow-wrap:anywhere}.chat-translation-success{color:#6ee7b7}
+.chat-translation-controls { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.chat-translation-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #b8c4d8; cursor: pointer; }
+.chat-translation-toggle input { accent-color: #8d72ee; width: 14px; height: 14px; }
+.chat-translation-toggle.is-enabled { color: #cbbaff; }
+.chat-translation-toggle:has(input:disabled) { opacity: .5; cursor: default; }
+.chat-translation-indicator { color: #f6cd73; font-size: 12px; }
+.chat-translation-overlay { white-space: normal; color: #e9edfa; }
+.chat-translation-dialog { box-sizing: border-box; width: min(620px, calc(100vw - 36px)); }
+.chat-translation-dialog .chat-translation-settings { margin: 0; border: 0; }
+
+.account-task-tab{display:inline-flex;align-items:stretch}.account-task-tab>button:first-child{border-radius:6px 0 0 6px}.account-task-tabs .account-task-tab-close{border-radius:0 6px 6px 0;border-left:0;padding:6px 8px;display:flex;align-items:center;color:#fca5a5}.account-task-tab-close:hover:not(:disabled){background:#4a2633}.account-task-tab-close:disabled{opacity:.5;cursor:wait}
+
+/* Incoming reminders stay visible in both expanded and icon-only sidebars. */
+.account-platform-icon{position:relative}
+.account-platform-icon>.window-unread-badge{position:absolute;top:-7px;right:-7px;min-width:18px;max-width:none;height:18px;min-height:18px;padding:0 3px;border-width:1px;font-size:10px!important;line-height:16px!important;white-space:nowrap}
+
+.chat-translation-appearance{margin:16px 0;padding:14px;border:1px solid #39465f;border-radius:10px;min-width:0}
+.chat-translation-appearance h4{margin:0 0 12px;font-size:13px}
+.chat-translation-color-inputs{display:flex;align-items:center;gap:8px;min-width:0}
+.chat-translation-color-inputs input[type=color]{flex:0 0 46px;width:46px;height:42px;cursor:pointer}
+.chat-translation-color-inputs input[type=text],.chat-translation-color-inputs .formal-input{min-width:0;flex:1}
+.chat-translation-size-slider{display:block;width:100%;margin:14px 0;accent-color:#9d78f5}
+.chat-translation-preview{padding:12px;background:#0b141a;border-radius:8px;min-width:0}
+.chat-translation-preview>span{font-size:11px;color:#9baabd}
+.chat-translation-preview p{margin:8px 0 0;font-family:sans-serif;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
+
+.immersive-translation-controls{display:flex;align-items:center;flex-wrap:nowrap;white-space:nowrap}
+#account-translation-actions{display:flex;align-items:center;flex-wrap:nowrap}
+.immersive-channel-settings{padding:14px;border:1px solid #554376;border-radius:10px;margin:14px 0}
+.immersive-channel-options{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+
+.account-browser-preview{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none;z-index:1}
+
+/* r33: clearer account hierarchy with flat surfaces and no blur/compositing effects. */
+.formal-main:has(.account-docked-workspace){height:100vh;height:100dvh;display:flex;flex-direction:column;min-height:0}
+.formal-main:has(.account-docked-workspace)>.formal-header{flex-shrink:0}
+.formal-content:has(>.account-docked-workspace){flex:1;min-height:0;display:block}
+.account-docked-workspace{background:var(--ui-bg,#0a1020);color:var(--ui-text,#e9effb);min-height:0;height:100%}
+.account-sidebar{background:var(--ui-panel,#111b2c);border-color:var(--ui-border,#2d3d57);gap:10px}
+.account-sidebar>header,.account-sidebar footer{flex-shrink:0}
+.account-sidebar small,.account-sidebar-status,.account-sidebar-empty{color:var(--ui-muted,#a0aec5)}
+.account-sidebar-list{padding:2px;gap:5px;overscroll-behavior:contain;scrollbar-gutter:stable}
+.account-sidebar-collapsed .account-sidebar-list{scrollbar-gutter:auto}
+.account-sidebar-item{border-color:transparent;border-radius:9px;min-height:56px}
+.account-sidebar-item:hover:not([aria-disabled=true]){background:#1b2940;border-color:#3a4a64}
+.account-sidebar-item.active,.account-sidebar-item.active:hover{background:#292540;border-color:var(--ui-accent,#a997ff)}
+.account-sidebar-item.active .account-sidebar-identity strong{color:#fff}
+.account-sidebar-item.active .account-sidebar-status{color:#c5cce0}
+.account-sidebar-status.locked,.account-sidebar-item.active .account-sidebar-status.locked{color:#f0cc91}
+.account-sidebar-status .online{background:var(--ui-mint,#6ee0bf)}
+.account-sidebar footer{border-color:var(--ui-border,#2d3d57);padding-top:10px}
+.account-sidebar footer>span{color:#c3cee0}
+.account-sidebar-search{min-height:36px;background:var(--ui-bg,#0a1020);border-color:var(--ui-border,#2d3d57);color:var(--ui-muted,#a0aec5)}
+.account-sidebar-search:focus-within{border-color:var(--ui-accent,#a997ff);outline:1px solid var(--ui-accent,#a997ff);outline-offset:1px}
+.account-sidebar-search input{font-size:12px;color:var(--ui-text,#e9effb)}
+.account-sidebar-search input::placeholder{color:#8d9db6;opacity:1}
+.account-sidebar-search input:focus-visible{outline:none}
+
+/* Keyboard focus stays visible within scrolling rows, menus, and portalled editors. */
+.account-docked-workspace button:focus-visible,
+.account-overlay :is(button,input,select,textarea):focus-visible,
+.account-context-menu>button:focus-visible{outline:2px solid var(--ui-mint,#6ee0bf);outline-offset:2px}
+.account-docked-workspace .account-sidebar-item:focus-visible{outline-offset:-3px}
+.account-sidebar-search button:focus-visible,.account-context-menu>button:focus-visible{outline-offset:-2px}
+.account-window-select-row>input:focus-visible{outline:2px solid var(--ui-mint,#6ee0bf);outline-offset:2px}
+.account-selection-tools{gap:8px;flex-wrap:wrap}
+.account-selection-tools button{min-height:28px;color:#d2c7ff}
+.account-batch-toolbar .formal-button{min-height:34px;padding:7px 10px}
+
+/* Task controls retain their own space; long tab lists scroll instead of covering the page. */
+.account-task-watch-toolbar{flex-shrink:0;gap:6px 12px;padding:9px 12px;background:#152238;border-bottom:1px solid var(--ui-border,#2d3d57);line-height:1.5}
+.account-task-watch-toolbar strong{color:var(--ui-text,#e9effb);font-weight:650}
+.account-task-watch-toolbar span,.account-task-watch-toolbar small{color:#b7c5da}
+.account-task-watch-toolbar small{margin-left:auto;font-size:11px}
+.account-task-tabs{flex-shrink:0;min-width:0;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;gap:7px;padding:8px 12px;background:var(--ui-panel,#111b2c);border-bottom:1px solid var(--ui-border,#2d3d57);overscroll-behavior-x:contain}
+.account-task-tab{flex-shrink:0;min-width:0}
+.account-task-tabs button{min-height:34px;padding:7px 11px;background:#1a2940;border-color:#41526e;color:#d2ddef;font-size:12px;line-height:1.4}
+.account-task-tab>button:first-child{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-task-tabs button:hover:not(:disabled){background:#263653;border-color:#71819a}
+.account-task-tabs button[aria-selected=true],.account-task-tabs button[aria-selected=true]:hover{background:#6652c6;border-color:#ac9aee;color:#fff}
+.account-task-tabs .account-task-tab-close{flex-shrink:0;min-width:32px;justify-content:center;padding:6px 8px;color:#ffc2c8}
+.account-task-tabs .account-task-tab-close:hover:not(:disabled){background:#4a2838;border-color:#c17988}
+.account-task-watch-error{flex-shrink:0;max-height:4.5em;overflow:auto;line-height:1.5;overflow-wrap:anywhere;color:#ffc3bb}
+.account-task-live{min-height:0}
+.account-browser-placeholder{padding:20px;color:var(--ui-muted,#a0aec5)}
+.account-browser-placeholder h3{color:var(--ui-text,#e9effb)}
+
+/* Editors use borders for separation; scrolling remains inside each dialog. */
+.account-overlay{background:rgb(3 7 15 / 76%);backdrop-filter:none;-webkit-backdrop-filter:none}
+.account-editor{box-sizing:border-box;min-width:0;padding:20px;background:var(--ui-panel,#111b2c);color:var(--ui-text,#e9effb);border-color:var(--ui-border,#2d3d57);box-shadow:none;overscroll-behavior:contain;scrollbar-gutter:stable}
+.account-editor header{margin-bottom:18px}
+.account-editor h2{font-size:21px;line-height:1.35;overflow-wrap:anywhere}
+.account-editor header p,.account-footnote,.account-empty p{color:var(--ui-muted,#a0aec5)}
+.account-form-grid{gap:12px}
+.account-editor .formal-field{margin-bottom:12px;min-width:0}
+.account-editor .formal-input{min-height:38px}
+.account-editor .formal-button,.account-delete-dialog .formal-button{min-height:36px}
+.account-editor footer,.account-delete-dialog footer{flex-wrap:wrap;gap:8px}
+.account-delete-dialog{box-sizing:border-box;max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:auto;background:var(--ui-panel,#111b2c);border-color:var(--ui-border,#2d3d57);overscroll-behavior:contain}
+.account-context-menu{box-sizing:border-box;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);overflow:auto;background:#152238;border-color:#50617b;box-shadow:none}
+.account-context-menu>button{min-height:34px}
+.account-context-menu>button:hover:not(:disabled),.account-context-menu>button:focus-visible{background:#2c2a48}
+.account-create-options{gap:12px;margin-top:18px}
+.account-create-options button{padding:20px 16px;gap:12px;background:#20273d}
+.account-create-options button:last-child{background:#183334}
+.account-create-options button:hover{filter:none;border-color:var(--ui-accent,#a997ff)}
+.chat-translation-settings{padding:16px;border-color:var(--ui-border,#2d3d57);background:#141f32}
+.chat-translation-settings h3{color:#d0c3ff}
+.chat-translation-appearance,.immersive-channel-settings{padding:12px;border-color:#41516f}
+.chat-translation-success{color:var(--ui-mint,#6ee0bf)}
+
+/* Short and narrow windows keep account actions reachable without a forced 550px canvas. */
+@media(max-width:900px){
+  .formal-main:has(.account-docked-workspace){height:calc(100vh - 76px);height:calc(100dvh - 76px)}
+}
+@media(max-height:700px){
+  .account-sidebar{padding-top:10px;padding-bottom:8px;gap:8px}
+  .account-sidebar footer{padding-top:8px;gap:6px}
+  .account-task-watch-toolbar{padding-top:7px;padding-bottom:7px}
+  .account-task-tabs{padding-top:6px;padding-bottom:6px}
+  .account-editor{padding:16px}
+  .account-editor header{margin-bottom:14px}
+}
+@media(max-width:760px){
+  .account-docked-workspace{grid-template-columns:160px minmax(0,1fr)}
+  .account-docked-workspace.account-sidebar-collapsed{grid-template-columns:76px minmax(0,1fr)}
+  .account-sidebar{padding-left:7px;padding-right:7px}
+  .account-sidebar>header{padding:0}
+  .account-sidebar>header strong{font-size:12px}
+  .account-sidebar-item{padding-left:6px;padding-right:6px;column-gap:6px}
+  .account-sidebar-identity strong{font-size:12px}
+  .account-task-watch-toolbar{gap:4px 8px;padding-left:9px;padding-right:9px}
+  .account-task-watch-toolbar small{margin-left:0}
+  .account-task-tabs{padding-left:9px;padding-right:9px}
+  .account-task-tab>button:first-child{max-width:180px}
+  .account-form-grid,.immersive-channel-options{grid-template-columns:minmax(0,1fr)}
+  .account-utility{width:min(850px,100vw)}
+  .chat-translation-dialog{width:100%;max-width:620px}
+}
+
+/* r34: keep account names, occupancy and multi-selection visually distinct. */
+.account-sidebar-identity strong { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+.account-sidebar-identity { gap: 6px; }
+.account-sidebar-status { font-size: 11px; line-height: 1.4; column-gap: 5px; }
+.account-sidebar-status .online,.account-sidebar-status .offline { flex: 0 0 6px; }
+.account-sidebar-item[aria-disabled=true] { border-color: #6c5a3c; background: #25222a; }
+.account-sidebar-item[aria-disabled=true].active { border-color: #ad93d8; background: #30283d; }
+.account-window-select-row { border-radius: 10px; padding: 2px; gap: 7px; }
+.account-window-select-row:has(>input:checked) { background: #282440; outline: 1px solid #9680d0; outline-offset: -1px; }
+.account-window-select-row>input { width: 16px; height: 16px; margin-left: 4px; }
+.account-window-select-row:focus-within { outline: 1px solid var(--ui-focus,#91ebe1); outline-offset: -1px; }
+.account-selection-tools { padding: 3px 0; gap: 6px; }
+.account-selection-tools button { padding: 5px 8px; border: 1px solid #3b4a64; border-radius: 6px; background: #172337; font-weight: 600; }
+.account-selection-tools button:hover:not(:disabled) { color: #f1eaff; background: #302849; border-color: #9077bc; }
+.account-selection-tools button:disabled { color: #8694ac; background: #182131; cursor: not-allowed; }
+.account-sidebar footer button { min-width: 28px; min-height: 28px; justify-content: center; align-items: center; border-radius: 6px; }
+.account-sidebar footer button:hover:not(:disabled) { background: #27344c; color: #e6edfa; }
+.account-task-tabs button[aria-selected=true],.account-task-tabs button[aria-selected=true]:hover { background: #44355f; border-color: #baa2f1; color: #f6efff; }
+.account-task-tabs .account-task-tab-close { background: #192338; }
+.account-task-watch-toolbar { color: #c8d6e8; background: #18263a; }
+.account-task-watch-toolbar strong { color: #a5eedf; }
+.account-task-watch-error { border-bottom: 1px solid #865c49; background: #312720; padding: 8px 12px; color: #f3d0a9; }
+.account-batch-results { background: #152437; border-bottom: 1px solid #3c4e69; color: #c6d5e9; line-height: 1.6; }
+.account-batch-results summary { padding: 3px 0; font-weight: 600; }
+.account-editor .formal-field>span { font-size: 12px; }
+.account-editor .formal-input { border-color: #415572; }
+.account-editor footer { padding-top: 14px; border-top: 1px solid #35445e; }
+.account-binding-list label { min-width: 0; align-items: flex-start; }
+.account-binding-list label>span { min-width: 0; }
+.account-binding-list label strong,.account-binding-list label small { overflow-wrap: anywhere; line-height: 1.5; }
+.account-binding-list label:has(input:checked) { border-color: #a68be2; background: #302743; }
+.account-binding-list label.disabled { opacity: 1; border-color: #6c5a3c; color: #b8b4b9; background: #25222a; }
+.account-binding-list label:focus-within { outline: 2px solid var(--ui-focus,#91ebe1); outline-offset: -3px; }
+.account-context-menu>button { white-space: normal; line-height: 1.5; }
+.account-sidebar-collapsed .account-window-select-row { padding: 0; }
+.account-sidebar-collapsed .account-window-select-row>input { margin-left: 0; }
+@media(max-width:760px){
+  .account-batch-toolbar { gap: 5px; }
+  .account-batch-toolbar .formal-button { min-width: 0; white-space: normal; }
+  .account-editor footer .formal-button { flex: 1 1 120px; min-width: 0; white-space: normal; }
+}
+
+/* r35: refine account chrome and editors without resizing the native webpage surface. */
+.account-sidebar { background: #111d30; border-color: #344860; }
+.account-sidebar>header strong { color: #e5edf9; letter-spacing: .02em; }
+.account-sidebar-item.active { box-shadow: inset 3px 0 #b99af2; }
+.account-sidebar-search { border-color: #405471; background: #0c1729; }
+.account-sidebar footer { border-top-color: #3a4e69; }
+.account-sidebar-status.locked { font-weight: 600; }
+.account-task-tabs { background: #101c2f; border-color: #3c4d68; }
+.account-task-watch-toolbar { background: #1a2c41; border-color: #3c536f; }
+.account-task-tabs button[aria-selected=true],.account-task-tabs button[aria-selected=true]:hover { background: #3d3159; border-color: #baa2f1; box-shadow: inset 0 -2px #bba1fa; }
+.account-context-menu { border-color: #657699; border-radius: 12px; background: #18263c; }
+.account-context-menu>strong { color: #c4d2e7; border-bottom: 1px solid #3b4d68; margin-bottom: 5px; }
+.account-context-menu>button:hover:not(:disabled),.account-context-menu>button:focus-visible { background: #35304e; }
+.account-editor { background: #111e31; }
+.account-editor header { padding-bottom: 14px; border-bottom: 1px solid #3b4d68; }
+.account-editor h2 { color: #f0f3fe; }
+.account-editor header p { line-height: 1.65; }
+.account-editor .formal-field>span { color: #bac9df; }
+.account-editor .account-binding-picker h3 { color: #d4c8f7; }
+.account-binding-list label { background: #15243a; border-color: #435975; }
+.account-create-options button { border-color: #78629a; background: #2b2742; }
+.account-create-options button:last-child { border-color: #487e75; background: #1d3939; }
+.account-create-options span { color: #c0cde0; line-height: 1.6; overflow-wrap: anywhere; }
+.account-batch-preview { border-color: #50658b; background: #1c2c45; color: #d3def0; line-height: 1.6; }
+.account-browser-placeholder { border: 1px dashed #435370; border-radius: 16px; background: #131f32; }
+.account-delete-dialog { border-color: #967180; }
+.account-delete-dialog p { color: #bbc8dc; }
+.chat-translation-settings { background: #142239; border-color: #465c7b; }
+.chat-translation-settings h3 { color: #dbceff; }
+.chat-translation-appearance { background: #101c2e; border-color: #465875; }
+.immersive-channel-settings { border-color: #715a99; background: #24213a; }
+.chat-translation-preview { border: 1px solid #385766; }
+.account-note { border: 1px solid #477e6d; background: #1b3c35; color: #b2f0d8; }
+.account-history summary:focus-visible,.account-batch-results summary:focus-visible { outline: 2px solid var(--ui-focus,#91ebe1); outline-offset: -2px; }
+
+/* Native task pages expose their load state instead of an unexplained black pane. */
+.account-task-surface-state{height:100%;box-sizing:border-box;padding:28px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;text-align:center;background:radial-gradient(ellipse at 50% 35%,#172239 0%,#0d1421 65%);color:#aebcd2;cursor:default}
+.account-task-surface-state>svg{color:#a898df;opacity:.85}
+.account-task-surface-state>strong{font-size:15px;color:#e3eaf6;font-weight:600}
+.account-task-surface-state>span{max-width:480px;line-height:1.7;font-size:13px;overflow-wrap:anywhere}
+.account-task-surface-state>small{font-size:12px;color:#7f91ad}
+
+.account-task-watch-toolbar small{white-space:nowrap}.account-task-manual-note{margin:0;padding:8px 12px;color:#a7e8d3;background:#123029;border-bottom:1px solid #2c6152;font-size:12px;line-height:1.5}

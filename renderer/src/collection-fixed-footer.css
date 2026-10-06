@@ -1,0 +1,87 @@
+/* The anchor reserves the measured toolbar height, including its bottom gap.
+   Only this mounted collection component creates a fixed layer. */
+.collection-control-anchor { min-width: 0; }
+.collection-control-anchor > .collection-control-bar {
+  min-height: 0;
+  padding: 9px 12px;
+  grid-template-columns: minmax(155px, 195px) minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+}
+.collection-control-anchor > .collection-control-bar[data-fixed="true"] {
+  position: fixed;
+  bottom: 10px;
+  z-index: 25;
+  box-sizing: border-box;
+  max-height: min(45dvh, calc(100dvh - 90px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.collection-control-anchor .collection-control-copy { min-width: 0; gap: 8px; }
+.collection-control-anchor .collection-control-copy > div { min-width: 0; gap: 3px; }
+.collection-control-anchor .collection-control-copy strong { display: block; font-size: 12px; white-space: nowrap; }
+.collection-control-anchor .collection-control-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.collection-control-anchor .collection-filter-options { gap: 4px; min-width: 0; }
+.collection-control-anchor .collection-compact-options {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 5px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+.collection-control-anchor .collection-compact-options .formal-check {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 5px 7px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+.collection-control-anchor .collection-compact-options input { width: 14px; height: 14px; margin: 0; flex: 0 0 14px; }
+.collection-control-anchor .collection-avatar-filter-reminder { justify-content: flex-start; gap: 5px; min-height: 14px; overflow: hidden; font-size: 10px; line-height: 14px; }
+.collection-control-anchor .collection-avatar-filter-reminder > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collection-control-anchor .collection-control-actions {
+  grid-column: auto;
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  gap: 6px;
+  min-width: 0;
+}
+.collection-control-anchor .collection-control-actions .formal-button {
+  width: auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 9px;
+  gap: 5px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.collection-control-anchor .collection-control-actions .formal-button svg { width: 15px; height: 15px; flex: 0 0 15px; }
+@media (max-width: 1200px) {
+  .collection-control-anchor > .collection-control-bar { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; }
+  .collection-control-anchor .collection-control-copy { grid-column: 1; grid-row: 1; }
+  .collection-control-anchor .collection-control-actions { grid-column: 2; grid-row: 1; }
+  .collection-control-anchor .collection-filter-options { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 900px) {
+  .collection-control-anchor > .collection-control-bar[data-fixed="true"] { bottom: 84px; max-height: min(45dvh, calc(100dvh - 160px)); }
+}
+@media (max-width: 650px) {
+  .collection-control-anchor > .collection-control-bar { grid-template-columns: minmax(0, 1fr); padding: 8px 10px; gap: 6px; }
+  .collection-control-anchor .collection-control-copy { grid-column: 1; grid-row: 1; }
+  .collection-control-anchor .collection-filter-options { grid-column: 1; grid-row: 2; }
+  .collection-control-anchor .collection-control-actions { grid-column: 1; grid-row: 3; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  .collection-control-anchor .collection-control-actions .formal-button { padding-inline: 4px; font-size: 11px; gap: 3px; }
+  .collection-control-anchor .collection-control-actions .formal-button svg { width: 13px; height: 13px; flex-basis: 13px; }
+}

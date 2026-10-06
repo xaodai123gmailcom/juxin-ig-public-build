@@ -1,0 +1,8 @@
+Application: 聚鑫国际 3.0.4
+Source revision: stability-r94
+Edition: Instagram
+Feature revision: 2026.10.05-r6.4-ig
+Representation: public-sanitized-source
+Browser requirement: installed Google Chrome
+The build must print BUILD_SOURCE_REVISION=stability-r94 and BUILD_SOURCE_CHECK=PASS.
+Source verification is separate from native Windows and installed application acceptance.

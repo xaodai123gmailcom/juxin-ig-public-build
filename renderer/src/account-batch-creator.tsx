@@ -1,0 +1,17 @@
+import { useRef, useState } from "react";
+import { Layers3, Monitor, X } from "lucide-react";
+
+export function AccountCreationChoice({onSingle,onBatch,onClose}:{onSingle:()=>void;onBatch:()=>void;onClose:()=>void}) {
+  return <div className="account-overlay"><section className="account-editor account-create-choice" role="dialog" aria-modal="true" aria-label="选择创建方式"><header><h2>添加窗口</h2><button className="formal-button" aria-label="关闭创建方式" onClick={onClose}><X size={19}/></button></header><div className="account-create-options"><button onClick={onSingle}><Monitor size={28}/><strong>单个窗口创建</strong></button><button onClick={onBatch}><Layers3 size={28}/><strong>批量窗口创建</strong></button></div></section></div>;
+}
+
+export function AccountBatchCreator({busy,error,onCreate,onClose}:{busy:boolean;error:string;onCreate:(body:Record<string,unknown>)=>Promise<boolean>;onClose:()=>void}) {
+  const [values,setValues]=useState({prefix:"Instagram",count:10,start:1,platform:"instagram",group:"",proxy_server:""});
+  const key=useRef(crypto.randomUUID());
+  function set(name:keyof typeof values,value:string|number){key.current=crypto.randomUUID();setValues(v=>({...v,[name]:value}))}
+  return <div className="account-overlay"><section className="account-editor" role="dialog" aria-modal="true" aria-label="批量创建窗口"><header><h2>批量创建窗口</h2><button className="formal-button" aria-label="关闭批量创建" disabled={busy} onClick={onClose}><X size={19}/></button></header><form onSubmit={async e=>{e.preventDefault();if(await onCreate({action:"batch_create",request_key:key.current,...values}))onClose()}}>
+    {error&&<div className="formal-error-banner" role="alert">{error}</div>}
+    <div className="account-form-grid"><label className="formal-field"><span>软件平台</span><select disabled={busy} className="formal-input" value={values.platform} onChange={e=>set("platform",e.target.value)}><option value="instagram">照片墙（Instagram）</option><option value="whatsapp">即时通讯（WhatsApp）</option></select></label><label className="formal-field"><span>窗口名称前缀</span><input disabled={busy} required maxLength={60} className="formal-input" value={values.prefix} onChange={e=>set("prefix",e.target.value)}/></label><label className="formal-field"><span>创建数量</span><input disabled={busy} required min={1} step={1} type="number" className="formal-input" value={values.count} onChange={e=>set("count",Number(e.target.value))}/></label><label className="formal-field"><span>起始序号</span><input disabled={busy} required min={1} step={1} type="number" className="formal-input" value={values.start} onChange={e=>set("start",Number(e.target.value))}/></label><label className="formal-field"><span>分类</span><input disabled={busy} maxLength={80} className="formal-input" value={values.group} onChange={e=>set("group",e.target.value)}/></label><label className="formal-field"><span>代理地址（可选）</span><input disabled={busy} maxLength={240} className="formal-input" placeholder="http://主机:端口" value={values.proxy_server} onChange={e=>set("proxy_server",e.target.value)}/></label></div>
+    <div className="account-batch-preview"><strong>名称预览</strong><span>{values.prefix.trim()||"Instagram"} {values.start} ～ {values.prefix.trim()||"Instagram"} {values.start+Math.max(1,values.count)-1}</span></div><footer><button type="button" className="formal-button" disabled={busy} onClick={onClose}>取消</button><button type="submit" className="formal-button primary" disabled={busy||values.count<1||values.start<1||!values.prefix.trim()}>{busy?"正在创建…":`创建 ${values.count} 个窗口`}</button></footer>
+  </form></section></div>;
+}

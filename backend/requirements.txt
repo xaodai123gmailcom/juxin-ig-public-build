@@ -1,0 +1,12 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.8,<3
+playwright==1.62.0
+openai>=2,<3
+httpx>=0.27,<1
+# Named-zone regression data, also required on Windows without a system IANA DB.
+tzdata==2026.4
+openvino==2025.4.1
+openvino-telemetry==2025.2.0
+numpy==2.3.5
+Pillow==12.3.0

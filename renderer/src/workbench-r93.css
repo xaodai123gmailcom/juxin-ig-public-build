@@ -1,0 +1,59 @@
+/* Compact collection controls; preserve readable input sizes at every width. */
+.collection-settings-panel .formal-panel-header { padding: 10px 14px; }
+.collection-settings-panel .collection-settings-body { padding: 12px 14px; gap: 10px; }
+.collection-source-settings { grid-template-columns: minmax(210px, .8fr) minmax(300px, 1.2fr); gap: 10px; }
+.collection-source-settings .collection-condition-block { min-height: 46px; padding: 8px 12px; }
+.collection-condition-block > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px; }
+.collection-condition-block .collection-mode-row { margin: 0; }
+.collection-source-settings .collection-parallel-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 12px; }
+.collection-source-settings .collection-parallel-options { display: flex; flex-wrap: nowrap; gap: 6px; }
+.collection-parallel-option { min-width: 60px; padding: 7px 9px; }
+.collection-settings-body > .collection-discard-body { padding-top: 10px; gap: 8px; }
+.collection-discard-heading { justify-content: space-between; }
+.collection-discard-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+.collection-discard-group { display: flex; align-items: end; padding: 8px 10px 10px; }
+.collection-discard-fields { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.collection-discard-group.is-public .collection-discard-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.collection-settings-panel .formal-field { min-width: 0; gap: 5px; margin: 0; }
+.collection-settings-panel .formal-field > span { font-size: 12px; white-space: nowrap; }
+.collection-settings-panel .formal-input { min-width: 0; height: 36px; padding: 7px 9px; }
+.collection-settings-panel .collection-discard-days input { padding-right: 26px; }
+.collection-settings-panel .collection-discard-days > span { right: 9px; }
+.formal-nav a[data-nav="collection"] > span { font-size: 15px; font-weight: 700; line-height: 1.2; }
+.studio-windows .formal-row.nurture-window-row { display: grid; grid-template-columns: 18px 20px minmax(110px, 1fr) minmax(420px, 3fr) 70px; align-items: center; gap: 10px; }
+.nurture-window-metrics { display: grid; grid-template-columns: minmax(170px, 1.8fr) repeat(4, minmax(60px, 1fr)); gap: 12px; font-variant-numeric: tabular-nums; }
+.nurture-window-metrics > span { display: grid; gap: 5px; }
+.nurture-window-metrics small { color: #a4b9d3; font-size: 11px; }
+.nurture-window-metrics strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.nurture-window-metrics .nurture-last-time strong { font-size: 12px; }
+@media (max-width: 1100px) {
+  .collection-discard-groups { grid-template-columns: 1fr; }
+  .studio-windows .formal-row.nurture-window-row { grid-template-columns: 18px 20px minmax(100px, 1fr) 70px; }
+  .nurture-window-metrics { grid-column: 3 / -1; grid-row: 2; min-width: 0; }
+}
+@media (max-width: 650px) {
+  .collection-source-settings { grid-template-columns: 1fr; }
+  .collection-source-settings .collection-parallel-copy { grid-column: auto; }
+  .collection-settings-panel .formal-field > span { white-space: normal; }
+  .nurture-window-metrics { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .nurture-last-time { grid-column: 1 / -1; }
+}
+@media (max-width: 410px) {
+  .collection-discard-group.is-public .collection-discard-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .collection-source-settings .collection-parallel-setting { flex-wrap: wrap; }
+}
+
+/* R94: keep unfinished coverage visible without widening the task card. */
+.collection-coverage-note { flex-basis: 100%; white-space: normal; line-height: 1.5; font-size: 12px; }
+.collection-coverage-note.is-warning, .collection-progress-value.is-count-warning { color: #f9c779; }
+.collection-progress-value.is-remaining, .collection-progress-value.is-unobserved { color: #f1c993; }
+.split-review-coverage { display: grid; gap: 8px; margin-top: 10px; max-width: 440px; white-space: normal; }
+.split-review-coverage > div { display: grid; gap: 4px; padding: 8px; border: 1px solid #526581; border-radius: 7px; line-height: 1.5; }
+.split-review-coverage strong { font-size: 12px; }
+.split-review-coverage span, .split-review-coverage small { font-size: 11px; color: #c0cde0; overflow-wrap: anywhere; }
+.split-review-coverage .is-warning strong { color: #f9c779; }
+.split-review-coverage .is-reconciled strong { color: #7de4bb; }
+
+/* Parent-only source recheck and its distinct-identities gap stay together. */
+.collection-source-recheck{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:100%}
+.collection-source-recheck-gap{white-space:nowrap;font-variant-numeric:tabular-nums;color:#f6c975}
