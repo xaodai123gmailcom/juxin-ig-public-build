@@ -3,13 +3,14 @@ import ast
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import re
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 import unittest
 from unittest.mock import patch
 
@@ -75,6 +76,33 @@ class PublicContracts(unittest.TestCase):
             exec(compile(module,'<mock source binding contract>','exec'),scope)
         workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
         self.assertLess(workflow.index('ci/public_ci.py contracts'),workflow.index('ci/public_ci.py early'))
+
+    def test_unicode_layout_import_preflight_is_isolated_and_before_expensive_work(self):
+        tree=ast.parse((HERE/'public_ci.py').read_text())
+        contracts=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='contracts')
+        statements=[n for n in contracts.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
+            and isinstance(n.value.func,ast.Name) and n.value.func.id=='run_owned'
+            and n.value.args and isinstance(n.value.args[0],ast.Constant)]
+        by_label={n.value.args[0].value:n for n in statements}
+        statement=by_label['unicode-layout-import-preflight']
+        self.assertLess(contracts.body.index(by_label['contract-flat-git-source-binding']),
+                        contracts.body.index(statement))
+        self.assertLess(contracts.body.index(statement),
+                        contracts.body.index(by_label['contract-owned-process-wait-diagnostics']))
+        calls=[]
+        scope={'ROOT':Path('/synthetic'),'sys':SimpleNamespace(executable='verified-python'),
+               'run_owned':lambda *args:calls.append(args)}
+        module=ast.Module(body=[statement],type_ignores=[])
+        exec(compile(module,'<mock isolated layout preflight>','exec'),scope)
+        self.assertEqual(calls,[('unicode-layout-import-preflight',
+            ['verified-python','-I','-B','-X','utf8',str(Path('/synthetic/ci/public_ci_unicode.py')),
+             'layout-import-preflight'],90)])
+        scope['run_owned']=lambda *args: (_ for _ in ()).throw(RuntimeError('mock isolated import failure'))
+        with self.assertRaisesRegex(RuntimeError,'mock isolated import failure'):
+            exec(compile(module,'<mock isolated layout preflight>','exec'),scope)
+        workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
+        self.assertLess(workflow.index('ci/public_ci.py contracts'),workflow.index('ci/public_ci.py early'))
+        self.assertLess(workflow.index('ci/public_ci.py early'),workflow.index('ci/public_ci.py build'))
 
     def test_original_full_build_and_separate_installed_gate_are_mandatory(self):
         text=(HERE/'public_ci.py').read_text()
@@ -585,6 +613,173 @@ class PublicContracts(unittest.TestCase):
             encoded=json.dumps(parsed)
             for private in ('private','987654321','123456789','876543210'):
                 self.assertNotIn(private,encoded)
+
+
+class ParentFailureDiagnostics(unittest.TestCase):
+    def capture(self, source, filename, scope=None):
+        try:
+            exec(compile(source, str(filename), 'exec'), scope or {})
+        except BaseException:
+            return sys.exc_info()
+        self.fail('Fixture did not raise')
+
+    def test_actual_parent_source_and_installed_rejection_keep_failure_and_sealed_lines(self):
+        manifest={'ci/public_ci.py':'a'*64,'ci/public_ci_common.py':'b'*64}
+        require_node=next(node for node in ast.parse((HERE/'public_ci_common.py').read_text()).body
+            if isinstance(node,ast.FunctionDef) and node.name=='require')
+        raise_line=next(node.lineno for node in ast.walk(require_node) if isinstance(node,ast.Raise))
+        for stage in ('build','installed'):
+            with self.subTest(stage=stage),tempfile.TemporaryDirectory() as directory:
+                state=Path(directory)
+                with patch.object(ci,'verify_run_state',return_value={'nonce':'a'*32}),\
+                     patch.object(ci,'state_root',return_value=state),\
+                     patch.object(common,'state_root',return_value=state),\
+                     patch.object(common,'read_json',return_value=manifest),\
+                     patch.object(common,'source_identity',return_value={'fresh':True}),\
+                     patch.object(ci,'read_json',return_value={'installed_root':str(state/'private-installation')}),\
+                     patch.dict(os.environ,{'LOCALAPPDATA':str(state/'private-profile')}):
+                    action=(lambda:common.validate_source_build({'source_provenance':{}})) if stage=='build' else ci.installed_hashes
+                    with self.assertRaises(RuntimeError):
+                        ci.run_stage(stage,action)
+                result=json.loads((state/(stage+'-result.json')).read_text())
+                self.assertEqual(result['status'],'failed');self.assertEqual(result['hashes'],{})
+                files=list((state/'failures').iterdir());self.assertEqual(len(files),1)
+                record=json.loads(files[0].read_text())
+                self.assertTrue(record['diagnostic_parse_succeeded'])
+                self.assertEqual(record['gate'],stage+'-validation')
+                self.assertEqual(record['observed_exception_categories'],['RuntimeError'])
+                self.assertIn({'file':'ci/public_ci_common.py','line':raise_line},record['source_locations'])
+                self.assertTrue(all(row['file'] in manifest for row in record['source_locations']))
+                encoded=json.dumps(record)
+                for private in (str(state),str(HERE.parent),'private','message','args','function'):
+                    self.assertNotIn(private,encoded)
+
+    def test_exception_text_nested_tokens_and_outside_frames_are_never_parsed(self):
+        root=Path('/synthetic');filename=root/'ci/validator.py'
+        text='test_private_name\nValueError: nested-token\n  File "ci/other.py", line 987654'
+        info=self.capture('def private_function():\n    private_local="private-value"\n    raise RuntimeError(payload) from ValueError("private-cause")\nprivate_function()',
+            filename,{'payload':text})
+        value=common.parse_diagnostic_tails([],{'ci/validator.py':'a'*64,'ci/other.py':'b'*64},root,info)
+        self.assertEqual(value['observed_exception_categories'],['RuntimeError'])
+        self.assertEqual(value['test_ids'],[])
+        self.assertEqual(value['source_locations'],[{'file':'ci/validator.py','line':3},{'file':'ci/validator.py','line':4}])
+        for private in ('private','nested-token','987654','ValueError',str(root),'test_public_ci.py'):
+            self.assertNotIn(private,json.dumps(value))
+        for filename in ('/private/validator.py','/synthetic/../private/validator.py','ci/validator.py'):
+            info=self.capture('raise ValueError("private-path")',filename)
+            value=common.parse_diagnostic_tails([],{'ci/validator.py':'a'*64},root,info)
+            self.assertEqual(value['source_locations'],[])
+            self.assertEqual(value['observed_exception_categories'],['ValueError'])
+        info=self.capture('raise ExceptionGroup("private-group", [ValueError("private-child")])',
+            root/'ci/validator.py')
+        value=common.parse_diagnostic_tails([],{'ci/validator.py':'a'*64},root,info)
+        self.assertEqual(value['observed_exception_categories'],[])
+        self.assertEqual(value['source_locations'],[{'file':'ci/validator.py','line':1}])
+        self.assertNotIn('private',json.dumps(value))
+
+    def test_custom_type_names_messages_repr_and_attributes_are_not_observed(self):
+        def forbidden(*args):
+            raise AssertionError('Private exception introspection attempted')
+        class PrivateMeta(type):
+            __getattribute__=forbidden
+            __hash__=forbidden
+            __eq__=forbidden
+        custom=PrivateMeta('RuntimeError',(RuntimeError,),{
+            '__str__':forbidden,'__repr__':forbidden,'__getattribute__':forbidden})
+        info=self.capture('raise problem', '/synthetic/ci/validator.py',{'problem':custom('private-args')})
+        value=common.parse_diagnostic_tails([],{'ci/validator.py':'a'*64},Path('/synthetic'),info)
+        self.assertEqual(value['observed_exception_categories'],[])
+        self.assertEqual(value['source_locations'],[{'file':'ci/validator.py','line':1}])
+        self.assertNotIn('private',json.dumps(value))
+
+    def test_child_and_parent_items_union_before_caps_with_exact_unique_omissions(self):
+        root=Path('/synthetic');manifest={'ci/validator.py':'a'*64}
+        kind,problem,trace=self.capture('raise RuntimeError("private")',root/'ci/validator.py')
+        while trace.tb_next is not None:trace=trace.tb_next
+        chain=None
+        for line in list(range(20,46))*2:
+            chain=TracebackType(chain,trace.tb_frame,trace.tb_lasti,line)
+        tails=['\n'.join([f'  File "ci/validator.py", line {line}' for line in range(1,31)]
+            +['ValueError: private-child','RuntimeError: duplicate'])]*2
+        value=common.parse_diagnostic_tails(tails,manifest,root,(kind,problem,chain))
+        self.assertEqual(value['source_locations'],[{'file':'ci/validator.py','line':line} for line in range(1,21)])
+        self.assertEqual(value['source_locations_omitted'],25)
+        self.assertEqual(value['observed_exception_categories'],['RuntimeError','ValueError'])
+        self.assertEqual(value['observed_exception_categories_omitted'],0)
+        record=dict(value,gate='build-validation',outcome='validation-failed',exit_code=None,diagnostic_parse_succeeded=True)
+        summary=common.bound_diagnostic_records([record])
+        self.assertEqual(summary['detail_items_omitted'],25)
+
+    def test_no_active_exception_does_not_invent_cleanup_evidence(self):
+        info=self.capture('raise RuntimeError("private")','/synthetic/ci/validator.py')
+        root=Path('/synthetic');manifest={'ci/validator.py':'a'*64}
+        try:
+            raise info[1]
+        except RuntimeError:
+            for context in (None,(None,None,None)):
+                value=common.parse_diagnostic_tails([],manifest,root,context)
+                self.assertTrue(all(value[field]==[] and value[field+'_omitted']==0 for field in common.DIAGNOSTIC_LIST_FIELDS))
+
+    def test_oversized_capture_fails_closed_and_preserves_separate_child_record(self):
+        kind,problem,trace=self.capture('raise RuntimeError("private")','/synthetic/ci/validator.py')
+        while trace.tb_next is not None:trace=trace.tb_next
+        chain=None
+        for unused in range(65537):chain=TracebackType(chain,trace.tb_frame,trace.tb_lasti,1)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);common.write_json(root/'SOURCE_SHA256.json',{})
+            with patch.object(common,'ROOT',root),patch.object(common,'state_root',return_value=root),\
+                 patch.object(common,'bounded_log_tail',return_value='AssertionError: private-child'):
+                common.save_failure_diagnostic('child-gate',{'outcome':'target-exited-nonzero','targetExitCode':1},(root/'child.log',))
+                common.save_failure_diagnostic('build-validation',exception_info=(kind,problem,chain))
+                summary=common.failure_diagnostics()
+            records={record['gate']:record for record in summary['records']}
+            self.assertEqual(records['child-gate']['observed_exception_categories'],['AssertionError'])
+            self.assertFalse(records['build-validation']['diagnostic_parse_succeeded'])
+            for field in common.DIAGNOSTIC_LIST_FIELDS:
+                self.assertEqual(records['build-validation'][field],[])
+                self.assertEqual(records['build-validation'][field+'_omitted'],0)
+            self.assertNotIn('private',json.dumps(summary))
+
+    def test_combined_location_ceiling_leaves_room_for_existing_byte_pruning(self):
+        root=Path('/synthetic');manifest={'ci/validator.py':'a'*64}
+        kind,problem,trace=self.capture('raise RuntimeError("private")',root/'ci/validator.py')
+        while trace.tb_next is not None:trace=trace.tb_next
+        chain=None
+        for line in range(1,65537):chain=TracebackType(chain,trace.tb_frame,trace.tb_lasti,line)
+        value=common.parse_diagnostic_tails([],manifest,root,(kind,problem,chain))
+        self.assertEqual(value['source_locations_omitted'],65516)
+        with self.assertRaises(RuntimeError):
+            common.parse_diagnostic_tails(['  File "ci/validator.py", line 65537'],manifest,root,(kind,problem,chain))
+
+    def test_capture_or_write_failure_cannot_change_parent_failure_or_main_exit(self):
+        for target in ('parse_diagnostic_tails','write_json'):
+            with self.subTest(target=target),tempfile.TemporaryDirectory() as directory:
+                state=Path(directory);failure=RuntimeError('private-original-failure')
+                def reject():raise failure
+                with patch.object(ci,'verify_run_state',return_value={'nonce':'a'*32}),\
+                     patch.object(ci,'state_root',return_value=state),\
+                     patch.object(common,'state_root',return_value=state),\
+                     patch.object(common,'read_json',return_value={}),\
+                     patch.object(common,target,side_effect=RuntimeError('private-diagnostic-failure')):
+                    with self.assertRaises(RuntimeError) as caught:ci.run_stage('build',reject)
+                self.assertIs(caught.exception,failure)
+                self.assertEqual(json.loads((state/'build-result.json').read_text())['status'],'failed')
+        output=io.StringIO()
+        with patch.object(ci.sys,'argv',['public_ci.py','build']),\
+             patch.object(ci,'run_stage',side_effect=RuntimeError('private-main-failure')),\
+             patch('sys.stdout',output):
+            self.assertEqual(ci.main(),1)
+        self.assertEqual(output.getvalue(),'PUBLIC_CI_STAGE=build FAILED\n')
+
+    def test_successful_stage_does_not_capture_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory,\
+             patch.object(ci,'verify_run_state',return_value={'nonce':'a'*32}),\
+             patch.object(ci,'state_root',return_value=Path(directory)),\
+             patch.object(ci,'save_failure_diagnostic') as save:
+            ci.run_stage('build',lambda:{'proof':'synthetic'})
+            save.assert_not_called()
+            result=json.loads((Path(directory)/'build-result.json').read_text())
+            self.assertEqual(result['status'],'passed');self.assertEqual(result['hashes'],{'proof':'synthetic'})
 
 
 if __name__=='__main__':

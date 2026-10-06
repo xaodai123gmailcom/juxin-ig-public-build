@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+import importlib.util
 import io
 import json
 import math
@@ -14,6 +15,7 @@ import runpy
 import shutil
 import stat
 import sys
+from types import ModuleType
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -161,6 +163,124 @@ def python_command(python, script, *arguments):
     return [str(python), '-I', '-B', '-X', 'utf8', str(script), *map(str, arguments)]
 
 
+def execute_layout_verifier(arguments):
+    """Load five exact sealed files without making scripts/CWD importable.
+
+    The original verifier uses a relative sibling import with a direct-script
+    fallback. Under -I that fallback cannot resolve. A private package with no
+    search path provides only the already verified sibling module instead.
+    The three required app support modules use the same captured-byte path,
+    so cached bytecode cannot replace their verified source either.
+    """
+    verify_run_state()
+    require(sys.flags.isolated and sys.flags.ignore_environment and sys.flags.no_user_site,
+            'Frozen layout entry requires isolated Python')
+    require(not getattr(sys, 'frozen', False), 'Frozen layout verifier requires its Python interpreter')
+    require(arguments == ['frozen', '--help'] or (len(arguments) == 5 and arguments[0] == 'frozen'
+            and arguments[1] == '--manifest' and arguments[3] == '--dist'
+            and Path(arguments[2]).is_absolute() and Path(arguments[4]).is_absolute()),
+            'Layout entry accepts only exact frozen layout or help arguments')
+    package_name = '_igac_public_ci_layout'
+    targets = (('app', 'backend/app/__init__.py'),
+        ('app.openvino_import_privacy', 'backend/app/openvino_import_privacy.py'),
+        ('app.openvino_native_bootstrap', 'backend/app/openvino_native_bootstrap.py'),
+        (package_name + '.download_person_models', 'scripts/download_person_models.py'),
+        (package_name + '.verify_openvino_windows', 'scripts/verify_openvino_windows.py'))
+    require(not any(name == package_name or name.startswith(package_name + '.') for name in sys.modules),
+            'Private layout package must be fresh')
+    require(not any(name == 'app' or name.startswith('app.') for name in sys.modules),
+            'Layout entry requires fresh application module identities')
+    sealed = source_entries()
+    prepared = []
+    for name, relative in targets:
+        require(relative in sealed, 'Layout entry requires a sealed script')
+        path = regular(ROOT / relative)
+        with path.open('rb') as stream:
+            data = stream.read(1024 * 1024 + 1)
+        require(len(data) <= 1024 * 1024 and hashlib.sha256(data).hexdigest() == sealed[relative]
+                and digest(path) == sealed[relative], 'Layout entry script bytes are unsealed or changed')
+        # Compile every captured byte string before executing any source file.
+        prepared.append((name, path, compile(data, str(path), 'exec')))
+    package = ModuleType(package_name)
+    package.__package__, package.__path__ = package_name, []
+    sys.modules[package_name] = package
+    inserted = {package_name: package}
+    original_path = list(sys.path)
+    try:
+        for name, path, code in prepared:
+            specification = importlib.util.spec_from_file_location(name, path,
+                submodule_search_locations=[] if name == 'app' else None)
+            module = importlib.util.module_from_spec(specification)
+            if name == 'app':
+                module.__path__ = []
+            sys.modules[name] = module
+            inserted[name] = module
+            exec(code, module.__dict__)
+        for name, relative in (('app', 'backend/app/__init__.py'),
+                ('app.openvino_native_bootstrap', 'backend/app/openvino_native_bootstrap.py'),
+                ('app.openvino_import_privacy', 'backend/app/openvino_import_privacy.py')):
+            support = sys.modules.get(name)
+            expected = ROOT / relative
+            require(relative in sealed and support is not None and
+                    Path(getattr(support, '__file__', '')).resolve() == regular(expected).resolve() and
+                    digest(expected) == sealed[relative], 'Layout support module origin is not the sealed backend')
+        check_telemetry_consent()
+        return module.main(arguments)
+    finally:
+        for name, module in reversed(tuple(inserted.items())):
+            if sys.modules.get(name) is module:
+                del sys.modules[name]
+        # The original verifier temporarily inserts its verified backend root.
+        # Preserve that behavior during the call and remove it on every exit.
+        sys.path[:] = original_path
+
+
+def layout_probe(identifier, *, copied):
+    work = owned_work(identifier, 'frozen')
+    original = ROOT / 'dist/collector_core'
+    manifest = ROOT / 'build/openvino-native-manifest.json'
+    target = work / UNICODE_PARENT / 'collector_core' if copied else original
+    selected_manifest = work / 'original-native-manifest.json' if copied else manifest
+    regular(target, directory=True)
+    require(digest(selected_manifest) == digest(manifest) ==
+            digest(target / '_internal/openvino-native-manifest.json'),
+            'Layout probe must use the actual original frozen native manifest')
+    require(execute_layout_verifier(['frozen', '--manifest', str(selected_manifest), '--dist', str(target)]) == 0,
+            'Original frozen layout verifier failed')
+
+
+def layout_import_preflight():
+    """Real sealed imports and argparse only; block model/telemetry imports."""
+    forbidden = ('openvino', 'openvino_telemetry')
+    require(not any(name.split('.')[0] in forbidden for name in sys.modules),
+            'Layout import preflight requires no native/telemetry package loaded')
+
+    class Guard:
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname.split('.')[0] in forbidden:
+                raise RuntimeError('Layout import preflight forbids native/telemetry imports')
+
+    def audit(event, arguments):
+        if event == 'ctypes.dlopen' and arguments and any(
+                marker in str(arguments[0]).casefold() for marker in ('openvino', 'telemetry', 'tbb')):
+            raise RuntimeError('Layout import preflight forbids native/telemetry library loads')
+
+    guard = Guard()
+    sys.meta_path.insert(0, guard)
+    sys.addaudithook(audit)  # This fixed preflight is a short-lived owned child.
+    try:
+        try:
+            execute_layout_verifier(['frozen', '--help'])
+        except SystemExit as result:
+            require(type(result.code) is int and result.code == 0, 'Layout help routing failed')
+        else:
+            raise RuntimeError('Layout help must exit before any layout or inference work')
+        require(not any(name.split('.')[0] in forbidden for name in sys.modules),
+                'Layout import preflight loaded a forbidden package')
+    finally:
+        sys.meta_path.remove(guard)
+
+
 def source_gates():
     identifier, work = create_work('source')
     try:
@@ -269,9 +389,8 @@ def frozen_gates():
         copied = work / UNICODE_PARENT / 'collector_core'
         python = ROOT / '.venv/Scripts/python.exe'
         manifest = ROOT / 'build/openvino-native-manifest.json'
-        verifier = ROOT / 'scripts/verify_openvino_windows.py'
-        run_owned('unicode-frozen-original-layout', python_command(python, verifier,
-            'frozen', '--manifest', manifest, '--dist', original), 180)
+        run_owned('unicode-frozen-original-layout', python_command(python, Path(__file__),
+            'original-layout-probe', identifier), 180)
         sealed = fingerprint(original)
         for name, path in files(original).items():
             copy_file(path, copied / name, digest(path))
@@ -283,8 +402,8 @@ def frozen_gates():
         cache = work / 'frozen-cache'
         cache.mkdir(exist_ok=False)
         require(not list(cache.iterdir()), 'Frozen cache must start empty')
-        run_owned('unicode-frozen-copied-layout', python_command(python, verifier,
-            'frozen', '--manifest', copied_manifest, '--dist', copied), 180)
+        run_owned('unicode-frozen-copied-layout', python_command(python, Path(__file__),
+            'copied-layout-probe', identifier), 180)
         powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
         run_owned('unicode-frozen-real-inference', [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive',
             '-File', str(ROOT / 'scripts/test_frozen_openvino.ps1'), '-Executable', str(copied / 'collector_core.exe'),
@@ -300,16 +419,23 @@ def frozen_gates():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('source', 'frozen', 'source-probe', 'classifier-probe'))
+    parser.add_argument('mode', choices=('source', 'frozen', 'source-probe', 'classifier-probe',
+        'original-layout-probe', 'copied-layout-probe', 'layout-import-preflight'))
     parser.add_argument('identifier', nargs='?')
     args = parser.parse_args()
     verify_run_state()  # Real authorized hosted Windows and raw ASCII 0 only.
-    if args.mode in ('source', 'frozen'):
+    if args.mode == 'layout-import-preflight':
+        require(args.identifier is None, 'Layout preflight does not accept a target')
+        layout_import_preflight()
+    elif args.mode in ('source', 'frozen'):
         require(args.identifier is None, 'Top-level Unicode gates create their own fresh owner')
         (source_gates if args.mode == 'source' else frozen_gates)()
     else:
         require(args.identifier is not None, 'Unicode child requires its exact owner')
-        (source_probe if args.mode == 'source-probe' else classifier_probe)(args.identifier)
+        if args.mode in ('original-layout-probe', 'copied-layout-probe'):
+            layout_probe(args.identifier, copied=args.mode == 'copied-layout-probe')
+        else:
+            (source_probe if args.mode == 'source-probe' else classifier_probe)(args.identifier)
     return 0
 
 

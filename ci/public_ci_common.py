@@ -14,6 +14,7 @@ import sys
 import threading
 import tempfile
 import time
+from types import TracebackType
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -245,11 +246,13 @@ def diagnostic_test_symbols(manifest, root):
     return symbols
 
 
-def parse_diagnostic_tails(tails, manifest, root=ROOT):
+def parse_diagnostic_tails(tails, manifest, root=ROOT, exception_info=None):
     """Observed bounded-tail context; only exact unittest headers identify failures.
 
     Exception categories can belong to handled/passing context, not the root cause.
-    Omission counts cover unique allowlisted items in these tails, not earlier logs.
+    Omission counts cover unique allowlisted items in these tails and the supplied
+    active traceback, not earlier logs or chained exceptions. Never format an
+    exception or inspect its message, arguments, locals or custom type name.
     """
     symbols = diagnostic_test_symbols(manifest, root)
     found_tests, failed_tests, locations, categories = set(), set(), set(), set()
@@ -283,6 +286,33 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT):
                 for name, number in pattern.findall(normalized):
                     if name in manifest:
                         locations.add((name, int(number)))
+    if exception_info is not None:
+        require(type(exception_info) is tuple and len(exception_info) == 3,
+                'Invalid active exception context')
+        kind, _, trace = exception_info
+        if kind is not None:
+            # Identity checks reject custom classes, including built-in lookalikes.
+            category = next((name for expected, name in (
+                (AssertionError, 'AssertionError'), (TimeoutError, 'TimeoutError'),
+                (OSError, 'OSError'), (RuntimeError, 'RuntimeError'),
+                (ValueError, 'ValueError'), (TypeError, 'TypeError'),
+                (ImportError, 'ImportError'), (ModuleNotFoundError, 'ModuleNotFoundError'))
+                if kind is expected), None)
+            if category is not None:
+                categories.add(category)
+            frames = 0
+            while trace is not None:
+                frames += 1
+                require(type(trace) is TracebackType and frames <= 65536,
+                        'Active traceback exceeds diagnostic bound')
+                try:
+                    name = Path(trace.tb_frame.f_code.co_filename).relative_to(root).as_posix()
+                except ValueError:
+                    name = None
+                if name in manifest and 0 < trace.tb_lineno < 10000000:
+                    locations.add((name, trace.tb_lineno))
+                trace = trace.tb_next
+        require(len(locations) <= 65536, 'Diagnostic locations exceed omission bound')
     items = {'test_ids': sorted(found_tests), 'failed_test_ids': sorted(failed_tests),
         'source_locations': [{'file': name, 'line': number} for name, number in sorted(locations)],
         'observed_exception_categories': sorted(categories)}
@@ -290,7 +320,7 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT):
             **{field + '_omitted': max(0, len(values) - 20) for field, values in items.items()}}
 
 
-def save_failure_diagnostic(label, receipt=None, paths=()):
+def save_failure_diagnostic(label, receipt=None, paths=(), *, exception_info=None):
     """Best-effort diagnostics must never turn a failed gate into success."""
     try:
         outcomes = {'completed', 'target-exited-nonzero', 'execution-timeout', 'cancelled',
@@ -306,7 +336,8 @@ def save_failure_diagnostic(label, receipt=None, paths=()):
             record['exit_code'] = code if type(code) is int and -(2**31) <= code < 2**31 else None
         try:
             tails = [bounded_log_tail(path) for path in paths]
-            record.update(parse_diagnostic_tails(tails, read_json(ROOT / 'SOURCE_SHA256.json'), ROOT))
+            record.update(parse_diagnostic_tails(tails, read_json(ROOT / 'SOURCE_SHA256.json'), ROOT,
+                                                exception_info))
             record['diagnostic_parse_succeeded'] = True
         except Exception:
             pass

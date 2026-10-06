@@ -39,6 +39,8 @@ def contracts():
               '-File', str(ROOT / 'ci/public_ci_pwsh_logging.ps1')], 180)
     run_owned('contract-flat-git-source-binding', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_ci_source_binding.py'), '-v'], 180)
+    run_owned('unicode-layout-import-preflight', [sys.executable, '-I', '-B', '-X', 'utf8',
+              str(ROOT / 'ci/public_ci_unicode.py'), 'layout-import-preflight'], 90)
     run_owned('contract-owned-process-wait-diagnostics', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_owned_process_wait_diagnostics.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
@@ -136,7 +138,7 @@ def run_stage(name, action):
         result.update(status='passed', hashes=hashes or {})
     finally:
         if result['status'] != 'passed':
-            save_failure_diagnostic(name + '-validation')
+            save_failure_diagnostic(name + '-validation', exception_info=sys.exc_info())
         result['finished_ns'] = time.time_ns()
         write_json(state_root() / (name + '-result.json'), result)
 
@@ -206,8 +208,8 @@ def main():
         else:
             globals()[stage]()
     except Exception:
-        # Raw exceptions can contain runner paths or application data. They are
-        # retained in bounded runner-only child logs, never printed or uploaded.
+        # Raw exceptions can contain runner paths or application data. Child logs
+        # stay on the runner; parent failures expose only allowlisted diagnostics.
         print('PUBLIC_CI_STAGE=' + stage + ' FAILED', flush=True)
         return 1
     print('PUBLIC_CI_STAGE=' + stage + ' PASSED', flush=True)
