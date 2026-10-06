@@ -227,8 +227,12 @@ def bounded_log_tail(path):
 
 
 DIAGNOSTIC_LIST_FIELDS = ('test_ids', 'failed_test_ids', 'source_locations', 'observed_exception_categories')
+DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES = frozenset(('OwnedProcessWaitTimeout',
+    'OwnedProcessWaitFailedInvalidHandle', 'OwnedProcessWaitFailedAccessDenied',
+    'OwnedProcessWaitFailedOther', 'OwnedProcessWaitFailedErrorUnavailable',
+    'OwnedProcessWaitUnexpected'))
 DIAGNOSTIC_EXCEPTION_CATEGORIES = frozenset(('AssertionError', 'TimeoutError', 'CancelledError',
-    'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError'))
+    'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError')) | DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES
 
 
 def diagnostic_test_symbols(manifest, root):
@@ -253,6 +257,10 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT):
         r'\([A-Za-z_][A-Za-z0-9_.]*\)(?:$| )')
     exception_header = re.compile(r'^(?:(?:builtins|asyncio\.exceptions|concurrent\.futures\._base)\.)?('
         + '|'.join(sorted(DIAGNOSTIC_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
+    # Direct script execution has no module prefix. These are the only native
+    # fixture module spellings accepted when unittest imports the same source.
+    wait_exception_header = re.compile(r'^(?:scripts\.tests\.)?test_owned_process_windows_r64\.('
+        + '|'.join(sorted(DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
     prefix = str(root).replace('\\', '/').rstrip('/') + '/'
     patterns = (re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+)\", line ([1-9][0-9]{0,6})', re.I),
                 re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+):([1-9][0-9]{0,6})(?::|\b)', re.I),
@@ -266,7 +274,7 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT):
             failed = failure_header.match(line)
             if failed and failed[1] in symbols:
                 failed_tests.add(failed[1])
-            category = exception_header.match(line)
+            category = exception_header.match(line) or wait_exception_header.match(line)
             if category:
                 categories.add(category[1])
             normalized = line.replace('\\', '/')

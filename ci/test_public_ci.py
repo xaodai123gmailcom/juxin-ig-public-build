@@ -91,6 +91,55 @@ class PublicContracts(unittest.TestCase):
             for forbidden in ('ExecutionPolicy','taskkill','RunAs','Set-ExecutionPolicy','opt_out('):
                 self.assertNotIn(forbidden,text)
 
+    def test_wait_diagnostic_mock_suite_is_a_required_contract(self):
+        calls=[]
+        expected=('contract-owned-process-wait-diagnostics',
+            ['base-python','-I','-B','-X','utf8',
+             str(Path('/synthetic/scripts/tests/test_owned_process_wait_diagnostics.py')),'-v'],180)
+        with patch.object(ci,'ROOT',Path('/synthetic')),\
+             patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
+             patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
+             patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
+            ci.contracts()
+            self.assertEqual([call for call in calls if call[0]==expected[0]],[expected])
+            failure=RuntimeError('mock wait diagnostic contract failure')
+            def fail(*args):
+                if args[0]==expected[0]:raise failure
+            with patch.object(ci,'run_owned',side_effect=fail),self.assertRaises(RuntimeError) as caught:
+                ci.contracts()
+            self.assertIs(caught.exception,failure)
+
+    def test_owned_descendant_prechecks_use_both_interpreters_before_dependencies(self):
+        calls=[];root=Path('/synthetic')
+        native=str(root/'scripts/tests/test_owned_process_windows_r64.py')
+        method='NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup'
+        expected=[
+            ('early-existing-prerequisites',['powershell','ci/public_ci_runner_prerequisites.ps1'],90),
+            ('early-create-venv',['base-python','-I','-X','utf8','-m','venv','.venv'],180),
+            ('early-owned-descendant-base',['base-python','-I','-X','utf8',native,method,'-v'],60),
+            ('early-owned-descendant-venv',[str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',native,method,'-v'],60)]
+        with patch.object(ci,'ROOT',root),patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
+             patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
+             patch.object(ci,'state_root',return_value=root/'state'),patch.object(ci,'digest',return_value='a'*64),\
+             patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
+            ci.early()
+            self.assertEqual(calls[:4],expected)
+            self.assertEqual(calls[4][0],'early-python-dependencies')
+            self.assertEqual(calls[5][0],'unicode-source-runtime')
+            for failed in expected[1:]:
+                with self.subTest(failed=failed[0]):
+                    calls.clear();failure=RuntimeError('mock owned descendant failure')
+                    def fail(*args):
+                        calls.append(args)
+                        if args[0]==failed[0]:raise failure
+                    with patch.object(ci,'run_owned',side_effect=fail),self.assertRaises(RuntimeError) as caught:
+                        ci.early()
+                    self.assertIs(caught.exception,failure)
+                    self.assertEqual(calls,expected[:expected.index(failed)+1])
+        package=json.loads((HERE.parent/'package.json').read_text())
+        self.assertIn('python scripts/tests/test_owned_process_r64.py && '
+                      'python scripts/tests/test_owned_process_windows_r64.py && ',package['scripts']['test:source'])
+
     def test_installed_checks_preserve_scale_upgrade_and_actual_api(self):
         text=(HERE/'public_ci_verify_installed.ps1').read_text()
         for token in ('--pure-ig','--snapshot-scale','--collection-completion','--standalone-nurture',
@@ -513,6 +562,26 @@ class PublicContracts(unittest.TestCase):
             for field in common.DIAGNOSTIC_LIST_FIELDS:
                 self.assertEqual(record[field],[]);self.assertEqual(record[field+'_omitted'],0)
             self.assertNotIn('private',json.dumps(summary))
+
+    def test_wait_diagnostic_categories_reject_private_module_and_name_lookalikes(self):
+        lines=[]
+        for name in common.DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES:
+            lines.extend(('private_module.'+name+': private-value',
+                'private_module.scripts.tests.test_owned_process_windows_r64.'+name+': private-value',
+                'test_owned_process_windows_r64_private.'+name+': private-value',
+                'test_owned_process_windows_r64.'+name+'Private: private-value',
+                name+'Private: private-value', 'Private'+name+': private-value',
+                'INFO '+name+': private-value',name+':private-value'))
+        parsed=common.parse_diagnostic_tails(['\n'.join(lines)],{},HERE.parent)
+        self.assertEqual(parsed['observed_exception_categories'],[])
+        for module in ('','test_owned_process_windows_r64.','scripts.tests.test_owned_process_windows_r64.'):
+            parsed=common.parse_diagnostic_tails(['\n'.join(
+                module+name+': private-handle=987654321 private-error=123456789 private-pid=876543210 C:\\private-path'
+                for name in common.DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES)],{},HERE.parent)
+            self.assertEqual(parsed['observed_exception_categories'],sorted(common.DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES))
+            encoded=json.dumps(parsed)
+            for private in ('private','987654321','123456789','876543210'):
+                self.assertNotIn(private,encoded)
 
 
 if __name__=='__main__':

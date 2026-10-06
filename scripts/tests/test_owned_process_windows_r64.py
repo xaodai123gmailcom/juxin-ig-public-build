@@ -26,6 +26,52 @@ sys.modules[spec.name] = owned
 spec.loader.exec_module(owned)
 
 
+class OwnedProcessWaitTimeout(AssertionError):
+    pass
+
+
+class OwnedProcessWaitFailedInvalidHandle(AssertionError):
+    pass
+
+
+class OwnedProcessWaitFailedAccessDenied(AssertionError):
+    pass
+
+
+class OwnedProcessWaitFailedOther(AssertionError):
+    pass
+
+
+class OwnedProcessWaitFailedErrorUnavailable(AssertionError):
+    pass
+
+
+class OwnedProcessWaitUnexpected(AssertionError):
+    pass
+
+
+def assert_held_process_signaled(api, handle):
+    """Preserve the zero-time exit assertion, exposing only fixed failure classes."""
+    result = api.WaitForSingleObject(handle, 0)
+    if result == 0xFFFFFFFF:  # WAIT_FAILED: capture before any further Windows call.
+        try:
+            last_error = ctypes.get_last_error()
+        except Exception:
+            raise OwnedProcessWaitFailedErrorUnavailable() from None
+        if type(last_error) is not int:
+            raise OwnedProcessWaitFailedErrorUnavailable()
+        if last_error == 6:
+            raise OwnedProcessWaitFailedInvalidHandle()
+        if last_error == 5:
+            raise OwnedProcessWaitFailedAccessDenied()
+        raise OwnedProcessWaitFailedOther()
+    if result == 0:  # WAIT_OBJECT_0 is the sole successful return value.
+        return
+    if result == 258:  # WAIT_TIMEOUT
+        raise OwnedProcessWaitTimeout()
+    raise OwnedProcessWaitUnexpected()
+
+
 @unittest.skipUnless(os.name == 'nt', 'Actual Windows API acceptance requires Windows')
 class NativeWindowsOwnership(unittest.TestCase):
     def setUp(self):
@@ -118,7 +164,7 @@ class NativeWindowsOwnership(unittest.TestCase):
         receipt=results[0]
         self.assertEqual(receipt['outcome'],'descendant-drain-timeout',receipt)
         self.assertTrue(receipt['confirmedTreeEmpty'],receipt)
-        self.assertEqual(self.api.WaitForSingleObject(handle,0),0)
+        assert_held_process_signaled(self.api,handle)
 
     def test_supervisor_death_closes_job_and_only_its_owned_processes(self):
         proof_file=self.folder/'tree.json'

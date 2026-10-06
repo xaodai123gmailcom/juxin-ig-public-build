@@ -39,6 +39,8 @@ def contracts():
               '-File', str(ROOT / 'ci/public_ci_pwsh_logging.ps1')], 180)
     run_owned('contract-flat-git-source-binding', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_ci_source_binding.py'), '-v'], 180)
+    run_owned('contract-owned-process-wait-diagnostics', [sys.executable, '-I', '-B', '-X', 'utf8',
+              str(ROOT / 'scripts/tests/test_owned_process_wait_diagnostics.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
                  'test-r64-crop-proof.py', 'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
                  'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py'):
@@ -51,6 +53,12 @@ def early():
     run_owned('early-existing-prerequisites', powershell('ci/public_ci_runner_prerequisites.ps1'), 90)
     run_owned('early-create-venv', [sys.executable, '-I', '-X', 'utf8', '-m', 'venv', '.venv'], 180)
     python = str(ROOT / '.venv/Scripts/python.exe')
+    # The original npm source suite uses bare python without activating the venv.
+    # Also probe the project interpreter while keeping the full native suite intact.
+    for label, interpreter in (('base', sys.executable), ('venv', python)):
+        run_owned('early-owned-descendant-' + label, [interpreter, '-I', '-X', 'utf8',
+                  str(ROOT / 'scripts/tests/test_owned_process_windows_r64.py'),
+                  'NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup', '-v'], 60)
     run_owned('early-python-dependencies', [python, '-I', '-X', 'utf8', 'scripts/install_python_dependencies.py',
                '--project-root', str(ROOT)], 1800)
     run_owned('unicode-source-runtime', [sys.executable, '-I', '-X', 'utf8',
