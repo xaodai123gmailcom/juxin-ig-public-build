@@ -108,7 +108,9 @@ class CropIconTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_menu_click_without_original_option_does_not_retry_or_advance(self):
         root,assets=await self.prepare()
-        await self.pub.page.evaluate("const baseCrop=crop;crop=()=>{baseCrop();document.querySelector('#original').remove()}")
+        # A bare assignment returns crop, which Playwright would invoke now.
+        await self.pub.page.evaluate("() => {const baseCrop=crop;crop=()=>{baseCrop();document.querySelector('#original').remove()};}")
+        self.assertIsNotNone(await self.pub.upload_stage())
         with self.assertRaisesRegex(ValidationError,'原版'):
             await self.pub.upload(root,assets)
         self.assertEqual(['menu'],await self.pub.page.evaluate('cropEvents'))

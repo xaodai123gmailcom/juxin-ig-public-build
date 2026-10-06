@@ -105,6 +105,25 @@ class PublicContracts(unittest.TestCase):
         self.assertIn("case_timeout='90' if pattern=='test_final_seed_browser_r62.py' else '180'",text)
         self.assertLess(text.index('if failures:'),text.index('native=json.loads'))
 
+    def test_crop_precheck_runs_first_and_failure_cannot_reach_full_suite(self):
+        tree=ast.parse((HERE/'public_ci_early.py').read_text())
+        call=next(n for n in tree.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
+            and isinstance(n.value.func,ast.Name) and n.value.func.id=='run_owned'
+            and n.value.args and isinstance(n.value.args[0],ast.Constant)
+            and n.value.args[0].value=='early-crop-focused-precheck')
+        native=next(n for n in tree.body if isinstance(n,ast.For)
+            and isinstance(n.target,ast.Name) and n.target.id=='fixture')
+        self.assertLess(tree.body.index(call),tree.body.index(native))
+        calls=[];env={'IGAC_REQUIRE_POSTING_BROWSER':'1'}
+        module=ast.Module(body=[call],type_ignores=[])
+        scope={'python':'verified-python','env':env,'run_owned':lambda *args:calls.append(args)}
+        exec(compile(module,'<mock crop precheck>','exec'),scope)
+        self.assertEqual(calls,[('early-crop-focused-precheck', ['verified-python','-X','utf8',
+            'scripts/run_backend_tests.py','-p','test_crop_icon_r64.py','--case-timeout','180','-v'],1800,env)])
+        scope['run_owned']=lambda *args: (_ for _ in ()).throw(RuntimeError('mock crop failure'))
+        with self.assertRaisesRegex(RuntimeError,'mock crop failure'):
+            exec(compile(module,'<mock crop precheck>','exec'),scope)
+
     def test_native_loop_records_only_success_and_rejects_subsets_or_reordering(self):
         tree=ast.parse((HERE/'public_ci_early.py').read_text())
         loop=next(n for n in tree.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='fixture')
