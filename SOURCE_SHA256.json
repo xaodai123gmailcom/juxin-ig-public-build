@@ -164,7 +164,7 @@
   "backend/tests/test_chat_concurrency_r94.py": "3f998e6d023213031d391199395e7930cda6a7e3d64ea45f9bc4ae9866c8c276",
   "backend/tests/test_checkpoint_fence_r94.py": "58b596d8126ce5be824dba6e14be2aa60a12708c61d92cb8b7e654ee1f8d702b",
   "backend/tests/test_checkpoint_recovery_r25.py": "1021ac8bdd995147a191deed7c229cb3f53fc3a9fa3e182b3cd96d2becabf5f8",
-  "backend/tests/test_cloud_configuration_public.py": "a128377fa3b30d9573783dd24c94f5c26f7e0cfbb75f1990277df5ce9cf0f6bc",
+  "backend/tests/test_cloud_configuration_public.py": "f833321cacc972de94e134b34445890ae24d7e6437bf6d58b98e7c18782d5ff6",
   "backend/tests/test_collection_continuity_r94.py": "b9c8fece42c0243d7a32858c8ed6d280326d6f56dde2a445c0f5926463ff6f8e",
   "backend/tests/test_collection_coverage_r94.py": "5db931170a3bafa425b1eac9fe15256426960530d8ff31adbb5c06472b9fba6e",
   "backend/tests/test_collection_drain_r56.py": "1b5044665eab07f017a25ed3c1261f230995c9607fafe43843d143c56e32becd",

@@ -17,16 +17,26 @@ KEY = 'sb_publishable_offline_fixture'
 
 class CloudConfigurationTests(unittest.TestCase):
     def test_default_backend_configuration_is_disabled_and_has_no_endpoint_or_key(self):
-        with patch.dict(os.environ, {'IGAC_STARTUP_TOKEN': 'x' * 32}, clear=True):
+        # An empty Windows environment cannot resolve Path.home(). Keep cloud
+        # variables isolated and make the unrelated data-directory fixture explicit.
+        with patch.dict(os.environ, {'IGAC_STARTUP_TOKEN': 'x' * 32}, clear=True), \
+                patch('app.config._default_data_dir', return_value=Path('/offline-fixture')), \
+                patch('app.config.Path.home', side_effect=RuntimeError('Home directory unavailable')) as home:
             settings = Settings.from_env()
+        home.assert_not_called()
+        self.assertEqual(Path('/offline-fixture'), settings.data_dir)
         self.assertFalse(settings.cloud_enabled)
         self.assertEqual('', settings.supabase_url)
         self.assertEqual('', settings.supabase_publishable_key)
 
     def test_cloud_environment_needs_explicit_enable_flag(self):
         with patch.dict(os.environ, {'IGAC_STARTUP_TOKEN': 'x' * 32,
-                'IGAC_SUPABASE_URL': PROJECT, 'IGAC_SUPABASE_PUBLISHABLE_KEY': KEY}, clear=True):
+                'IGAC_SUPABASE_URL': PROJECT, 'IGAC_SUPABASE_PUBLISHABLE_KEY': KEY}, clear=True), \
+                patch('app.config._default_data_dir', return_value=Path('/offline-fixture')), \
+                patch('app.config.Path.home', side_effect=RuntimeError('Home directory unavailable')) as home:
             settings = Settings.from_env()
+        home.assert_not_called()
+        self.assertEqual(Path('/offline-fixture'), settings.data_dir)
         self.assertFalse(settings.cloud_enabled)
         self.assertNotIn(KEY, repr(settings))
         self.assertEqual(PROJECT, settings.supabase_url)
