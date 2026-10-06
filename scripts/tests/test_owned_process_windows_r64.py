@@ -55,14 +55,6 @@ class OwnedProcessVerifiedEvidenceRejected(AssertionError):
     pass
 
 
-class OwnedProcessVerifiedWaitTimeoutThenSignaled(AssertionError):
-    pass
-
-
-class OwnedProcessVerifiedAccountingZeroThenSignaled(AssertionError):
-    pass
-
-
 class OwnedProcessVerifiedSignalNotObservedInBudget(AssertionError):
     pass
 
@@ -112,21 +104,37 @@ def require_held_process_unsignaled(api, handle):
         raise observation()
 
 
-class VerifiedCleanupContainment(owned.WindowsContainment):
-    """Test-only observation of the unchanged private-job cleanup implementation."""
+class CleanupDeadlineContainment(owned.WindowsContainment):
+    """Record the existing cleanup budget without changing native supervision."""
     def __init__(self, request, *, clock=time.monotonic):
         super().__init__()
-        self.api.OpenProcess.argtypes = [owned.DWORD, owned.BOOL, owned.DWORD]
-        self.api.OpenProcess.restype = owned.HANDLE
         self.request = request
         self.clock = clock
-        self.held_child = self.verified_job = self.verified_root = None
-        self.acquired_at = self.acknowledged_at = None
         self.termination_started_at = self.termination_completed_at = None
         self.termination_deadline = None
+        self.termination_job = self.termination_root = None
+        self.termination_calls = 0
+
+    def terminate(self):
+        self.termination_calls += 1
+        self.termination_job, self.termination_root = self.job, self.process
+        self.termination_started_at = self.clock()
+        # API time and subsequent return/join work consume this same budget.
+        self.termination_deadline = self.termination_started_at + self.request.terminationSeconds
+        super().terminate()
+        self.termination_completed_at = self.clock()
+
+
+class VerifiedCleanupContainment(CleanupDeadlineContainment):
+    """Add retained-child identity and accounting observations to the regression."""
+    def __init__(self, request, *, clock=time.monotonic):
+        super().__init__(request, clock=clock)
+        self.api.OpenProcess.argtypes = [owned.DWORD, owned.BOOL, owned.DWORD]
+        self.api.OpenProcess.restype = owned.HANDLE
+        self.held_child = self.verified_child = self.verified_job = self.verified_root = None
+        self.acquired_at = self.acknowledged_at = None
         self.accounting_zero_at = self.accounting_wait_at = None
         self.accounting_wait = None
-        self.termination_calls = 0
 
     def acquire_child(self, pid, handles):
         if type(pid) is not int or pid <= 0 or not self.job or not self.process or self.closed:
@@ -145,24 +153,17 @@ class VerifiedCleanupContainment(owned.WindowsContainment):
         require_held_process_unsignaled(self.api, self.process)
         if self.termination_calls:
             raise OwnedProcessVerifiedEvidenceRejected()
-        self.held_child, self.verified_job, self.verified_root = handle, self.job, self.process
+        self.held_child = self.verified_child = handle
+        self.verified_job, self.verified_root = self.job, self.process
         self.acquired_at = self.clock()
 
     def acknowledge(self, acknowledgment):
-        if (self.held_child is None or self.verified_job != self.job or
+        if (self.held_child is None or self.verified_child != self.held_child or self.verified_job != self.job or
                 self.verified_root != self.process or self.termination_calls or self.closed):
             raise OwnedProcessVerifiedEvidenceRejected()
         require_held_process_unsignaled(self.api, self.process)
         acknowledgment.write_text('ack', encoding='ascii')
         self.acknowledged_at = self.clock()
-
-    def terminate(self):
-        self.termination_calls += 1
-        self.termination_started_at = self.clock()
-        # Deliberately anchored BEFORE the same TerminateJobObject call.
-        self.termination_deadline = self.termination_started_at + self.request.terminationSeconds
-        super().terminate()
-        self.termination_completed_at = self.clock()
 
     def active_processes(self):
         active = super().active_processes()
@@ -176,22 +177,62 @@ class VerifiedCleanupContainment(owned.WindowsContainment):
         return active
 
 
-def assert_verified_cleanup_observation(native, receipt, returned_at, initial_wait, initial_wait_at):
-    """A later signal categorizes the original assertion failure; it never repairs it."""
-    times = (native.acquired_at, native.acknowledged_at, native.termination_started_at,
-             native.termination_completed_at, native.accounting_zero_at,
-             native.accounting_wait_at, returned_at, initial_wait_at)
+def assert_cleanup_deadline(native, receipt, observed_at):
+    times = (native.termination_started_at, native.termination_completed_at, observed_at)
     valid_time = lambda value: type(value) in (int, float) and math.isfinite(value)
     if (not all(valid_time(value) for value in times) or list(times) != sorted(times) or
             not valid_time(native.termination_deadline) or
             native.termination_deadline != native.termination_started_at + 2 or
             (native.request.timeoutSeconds, native.request.drainSeconds, native.request.terminationSeconds) != (10, .5, 2) or
-            type(native.termination_calls) is not int or native.termination_calls != 1 or native.held_child is None or
-            not native.verified_job or native.verified_job != native.job or
-            not native.verified_root or native.verified_root != native.process or
+            type(native.termination_calls) is not int or native.termination_calls != 1 or
+            not native.termination_job or native.termination_job != native.job or
+            not native.termination_root or native.termination_root != native.process or
             native.closed is not True or not owned.cleanup_receipt(receipt) or
             receipt['outcome'] != 'descendant-drain-timeout' or receipt['targetExitCode'] != 0):
         raise OwnedProcessVerifiedEvidenceRejected()
+
+
+def assert_held_process_confirmation(native, handle, initial_wait, initial_wait_at, not_before):
+    """Confirm this same held handle only within the original cleanup deadline."""
+    valid_time = lambda value: type(value) in (int, float) and math.isfinite(value)
+    if (not valid_time(initial_wait_at) or not valid_time(not_before) or
+            initial_wait_at < not_before):
+        raise OwnedProcessVerifiedEvidenceRejected()
+    if initial_wait not in (None, OwnedProcessWaitTimeout):
+        raise initial_wait()
+    if initial_wait is None:
+        if initial_wait_at <= native.termination_deadline:
+            return
+        raise OwnedProcessVerifiedSignalNotObservedInBudget()
+    now = native.clock()
+    if not valid_time(now) or now < initial_wait_at:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    milliseconds = max(0, math.floor((native.termination_deadline - now) * 1000))
+    if milliseconds == 0:
+        raise OwnedProcessVerifiedSignalNotObservedInBudget()
+    final_wait = observe_held_process(native.api, handle, milliseconds)
+    observed_at = native.clock()
+    if not valid_time(observed_at) or observed_at < now:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    if final_wait not in (None, OwnedProcessWaitTimeout):
+        raise final_wait()
+    if final_wait is None and observed_at <= native.termination_deadline:
+        return
+    raise OwnedProcessVerifiedSignalNotObservedInBudget()
+
+
+def assert_verified_cleanup_observation(native, receipt, returned_at, initial_wait, initial_wait_at):
+    """Retain identity and chronology checks while accepting in-budget signaling."""
+    times = (native.acquired_at, native.acknowledged_at, native.termination_started_at,
+             native.termination_completed_at, native.accounting_zero_at,
+             native.accounting_wait_at, returned_at, initial_wait_at)
+    valid_time = lambda value: type(value) in (int, float) and math.isfinite(value)
+    if (not all(valid_time(value) for value in times) or list(times) != sorted(times) or
+            native.held_child is None or native.verified_child != native.held_child or
+            not native.verified_job or native.verified_job != native.job or
+            not native.verified_root or native.verified_root != native.process):
+        raise OwnedProcessVerifiedEvidenceRejected()
+    assert_cleanup_deadline(native, receipt, initial_wait_at)
     for observation in (native.accounting_wait, initial_wait):
         if observation not in (None, OwnedProcessWaitTimeout):
             raise observation()
@@ -199,27 +240,10 @@ def assert_verified_cleanup_observation(native, receipt, returned_at, initial_wa
         if native.accounting_wait is None:
             if native.accounting_wait_at <= native.termination_deadline:
                 return
-        elif initial_wait_at <= native.termination_deadline:
-            raise OwnedProcessVerifiedAccountingZeroThenSignaled()
-        raise OwnedProcessVerifiedSignalNotObservedInBudget()
-    if native.accounting_wait is not OwnedProcessWaitTimeout:
+    elif native.accounting_wait is not OwnedProcessWaitTimeout:
         # A process handle cannot become unsignaled after being observed signaled.
         raise OwnedProcessVerifiedEvidenceRejected()
-    now = native.clock()
-    if not valid_time(now) or now < initial_wait_at:
-        raise OwnedProcessVerifiedEvidenceRejected()
-    milliseconds = max(0, math.floor((native.termination_deadline - now) * 1000))
-    if milliseconds == 0:
-        raise OwnedProcessVerifiedSignalNotObservedInBudget()
-    late_wait = observe_held_process(native.api, native.held_child, milliseconds)
-    observed_at = native.clock()
-    if not valid_time(observed_at) or observed_at < now:
-        raise OwnedProcessVerifiedEvidenceRejected()
-    if late_wait not in (None, OwnedProcessWaitTimeout):
-        raise late_wait()
-    if late_wait is None and observed_at <= native.termination_deadline:
-        raise OwnedProcessVerifiedWaitTimeoutThenSignaled()
-    raise OwnedProcessVerifiedSignalNotObservedInBudget()
+    assert_held_process_confirmation(native, native.held_child, initial_wait, initial_wait_at, returned_at)
 
 
 def supervise_verified_cleanup(request, native, cancelled):
@@ -316,7 +340,9 @@ class NativeWindowsOwnership(unittest.TestCase):
         proof_file=self.folder/'child.json'
         script = 'import subprocess,sys,time,json;from pathlib import Path;p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"]);Path(sys.argv[1]).write_text(json.dumps(p.pid));time.sleep(.5)'
         results=[]
-        worker=threading.Thread(target=lambda:results.append(owned.supervise(self.request(['-c',script,str(proof_file)]))))
+        request=self.request(['-c',script,str(proof_file)])
+        native=CleanupDeadlineContainment(request)
+        worker=threading.Thread(target=lambda:results.append(owned.supervise(request,containment=native)))
         worker.start()
         handle=self.held_process(self.wait_json(proof_file))
         worker.join(15)
@@ -324,7 +350,11 @@ class NativeWindowsOwnership(unittest.TestCase):
         receipt=results[0]
         self.assertEqual(receipt['outcome'],'descendant-drain-timeout',receipt)
         self.assertTrue(receipt['confirmedTreeEmpty'],receipt)
-        assert_held_process_signaled(self.api,handle)
+        confirmation_started_at=native.clock()
+        assert_cleanup_deadline(native,receipt,confirmation_started_at)
+        initial_wait=observe_held_process(native.api,handle)
+        initial_wait_at=native.clock()
+        assert_held_process_confirmation(native,handle,initial_wait,initial_wait_at,confirmation_started_at)
 
     def test_verified_parent_exit_and_inherited_output_descendant_cleanup(self):
         proof_file = self.folder/'verified-child.json'

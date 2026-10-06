@@ -231,8 +231,7 @@ DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES = frozenset(('OwnedProcessWaitTimeout',
     'OwnedProcessWaitFailedInvalidHandle', 'OwnedProcessWaitFailedAccessDenied',
     'OwnedProcessWaitFailedOther', 'OwnedProcessWaitFailedErrorUnavailable',
     'OwnedProcessWaitUnexpected', 'OwnedProcessVerifiedEvidenceRejected',
-    'OwnedProcessVerifiedWaitTimeoutThenSignaled', 'OwnedProcessVerifiedSignalNotObservedInBudget',
-    'OwnedProcessVerifiedAccountingZeroThenSignaled'))
+    'OwnedProcessVerifiedSignalNotObservedInBudget'))
 DIAGNOSTIC_EXCEPTION_CATEGORIES = frozenset(('AssertionError', 'TimeoutError', 'CancelledError',
     'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError')) | DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES
 
