@@ -113,19 +113,22 @@ class PublicContracts(unittest.TestCase):
         calls=[];root=Path('/synthetic')
         native=str(root/'scripts/tests/test_owned_process_windows_r64.py')
         method='NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup'
+        experiment='NativeWindowsOwnership.test_verified_parent_exit_and_inherited_output_descendant_cleanup'
         expected=[
             ('early-existing-prerequisites',['powershell','ci/public_ci_runner_prerequisites.ps1'],90),
             ('early-create-venv',['base-python','-I','-X','utf8','-m','venv','.venv'],180),
+            ('early-owned-verified-descendant-base',['base-python','-I','-X','utf8',native,experiment,'-v'],60),
             ('early-owned-descendant-base',['base-python','-I','-X','utf8',native,method,'-v'],60),
+            ('early-owned-verified-descendant-venv',[str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',native,experiment,'-v'],60),
             ('early-owned-descendant-venv',[str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',native,method,'-v'],60)]
         with patch.object(ci,'ROOT',root),patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
              patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
              patch.object(ci,'state_root',return_value=root/'state'),patch.object(ci,'digest',return_value='a'*64),\
              patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
             ci.early()
-            self.assertEqual(calls[:4],expected)
-            self.assertEqual(calls[4][0],'early-python-dependencies')
-            self.assertEqual(calls[5][0],'unicode-source-runtime')
+            self.assertEqual(calls[:6],expected)
+            self.assertEqual(calls[6][0],'early-python-dependencies')
+            self.assertEqual(calls[7][0],'unicode-source-runtime')
             for failed in expected[1:]:
                 with self.subTest(failed=failed[0]):
                     calls.clear();failure=RuntimeError('mock owned descendant failure')

@@ -56,6 +56,9 @@ def early():
     # The original npm source suite uses bare python without activating the venv.
     # Also probe the project interpreter while keeping the full native suite intact.
     for label, interpreter in (('base', sys.executable), ('venv', python)):
+        run_owned('early-owned-verified-descendant-' + label, [interpreter, '-I', '-X', 'utf8',
+                  str(ROOT / 'scripts/tests/test_owned_process_windows_r64.py'),
+                  'NativeWindowsOwnership.test_verified_parent_exit_and_inherited_output_descendant_cleanup', '-v'], 60)
         run_owned('early-owned-descendant-' + label, [interpreter, '-I', '-X', 'utf8',
                   str(ROOT / 'scripts/tests/test_owned_process_windows_r64.py'),
                   'NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup', '-v'], 60)

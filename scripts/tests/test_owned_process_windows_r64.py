@@ -8,6 +8,7 @@ import base64
 import ctypes
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -50,26 +51,185 @@ class OwnedProcessWaitUnexpected(AssertionError):
     pass
 
 
-def assert_held_process_signaled(api, handle):
+class OwnedProcessVerifiedEvidenceRejected(AssertionError):
+    pass
+
+
+class OwnedProcessVerifiedWaitTimeoutThenSignaled(AssertionError):
+    pass
+
+
+class OwnedProcessVerifiedAccountingZeroThenSignaled(AssertionError):
+    pass
+
+
+class OwnedProcessVerifiedSignalNotObservedInBudget(AssertionError):
+    pass
+
+
+def raise_held_process_api_failure():
+    # Read the calling thread's last error before any further Windows call.
+    try:
+        last_error = ctypes.get_last_error()
+    except Exception:
+        raise OwnedProcessWaitFailedErrorUnavailable() from None
+    if type(last_error) is not int:
+        raise OwnedProcessWaitFailedErrorUnavailable()
+    if last_error == 6:
+        raise OwnedProcessWaitFailedInvalidHandle()
+    if last_error == 5:
+        raise OwnedProcessWaitFailedAccessDenied()
+    raise OwnedProcessWaitFailedOther()
+
+
+def assert_held_process_signaled(api, handle, milliseconds=0):
     """Preserve the zero-time exit assertion, exposing only fixed failure classes."""
-    result = api.WaitForSingleObject(handle, 0)
+    result = api.WaitForSingleObject(handle, milliseconds)
     if result == 0xFFFFFFFF:  # WAIT_FAILED: capture before any further Windows call.
-        try:
-            last_error = ctypes.get_last_error()
-        except Exception:
-            raise OwnedProcessWaitFailedErrorUnavailable() from None
-        if type(last_error) is not int:
-            raise OwnedProcessWaitFailedErrorUnavailable()
-        if last_error == 6:
-            raise OwnedProcessWaitFailedInvalidHandle()
-        if last_error == 5:
-            raise OwnedProcessWaitFailedAccessDenied()
-        raise OwnedProcessWaitFailedOther()
+        raise_held_process_api_failure()
     if result == 0:  # WAIT_OBJECT_0 is the sole successful return value.
         return
     if result == 258:  # WAIT_TIMEOUT
         raise OwnedProcessWaitTimeout()
     raise OwnedProcessWaitUnexpected()
+
+
+def observe_held_process(api, handle, milliseconds=0):
+    try:
+        assert_held_process_signaled(api, handle, milliseconds)
+    except (OwnedProcessWaitTimeout, OwnedProcessWaitFailedInvalidHandle,
+            OwnedProcessWaitFailedAccessDenied, OwnedProcessWaitFailedOther,
+            OwnedProcessWaitFailedErrorUnavailable, OwnedProcessWaitUnexpected) as error:
+        return type(error)
+    return None
+
+
+def require_held_process_unsignaled(api, handle):
+    observation = observe_held_process(api, handle)
+    if observation is None:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    if observation is not OwnedProcessWaitTimeout:
+        raise observation()
+
+
+class VerifiedCleanupContainment(owned.WindowsContainment):
+    """Test-only observation of the unchanged private-job cleanup implementation."""
+    def __init__(self, request, *, clock=time.monotonic):
+        super().__init__()
+        self.api.OpenProcess.argtypes = [owned.DWORD, owned.BOOL, owned.DWORD]
+        self.api.OpenProcess.restype = owned.HANDLE
+        self.request = request
+        self.clock = clock
+        self.held_child = self.verified_job = self.verified_root = None
+        self.acquired_at = self.acknowledged_at = None
+        self.termination_started_at = self.termination_completed_at = None
+        self.termination_deadline = None
+        self.accounting_zero_at = self.accounting_wait_at = None
+        self.accounting_wait = None
+        self.termination_calls = 0
+
+    def acquire_child(self, pid, handles):
+        if type(pid) is not int or pid <= 0 or not self.job or not self.process or self.closed:
+            raise OwnedProcessVerifiedEvidenceRejected()
+        # Retained Popen in the waiting parent prevents PID reuse during acquisition.
+        handle = self.api.OpenProcess(0x00100000 | 0x1000, False, pid)
+        if not handle:
+            raise OwnedProcessVerifiedEvidenceRejected()
+        handles.append(handle)
+        member = owned.BOOL()
+        if not self.api.IsProcessInJob(handle, self.job, ctypes.byref(member)):
+            raise OwnedProcessVerifiedEvidenceRejected()
+        if not member.value:
+            raise OwnedProcessVerifiedEvidenceRejected()
+        require_held_process_unsignaled(self.api, handle)
+        require_held_process_unsignaled(self.api, self.process)
+        if self.termination_calls:
+            raise OwnedProcessVerifiedEvidenceRejected()
+        self.held_child, self.verified_job, self.verified_root = handle, self.job, self.process
+        self.acquired_at = self.clock()
+
+    def acknowledge(self, acknowledgment):
+        if (self.held_child is None or self.verified_job != self.job or
+                self.verified_root != self.process or self.termination_calls or self.closed):
+            raise OwnedProcessVerifiedEvidenceRejected()
+        require_held_process_unsignaled(self.api, self.process)
+        acknowledgment.write_text('ack', encoding='ascii')
+        self.acknowledged_at = self.clock()
+
+    def terminate(self):
+        self.termination_calls += 1
+        self.termination_started_at = self.clock()
+        # Deliberately anchored BEFORE the same TerminateJobObject call.
+        self.termination_deadline = self.termination_started_at + self.request.terminationSeconds
+        super().terminate()
+        self.termination_completed_at = self.clock()
+
+    def active_processes(self):
+        active = super().active_processes()
+        if (self.termination_completed_at is not None and active == 0 and
+                self.accounting_zero_at is None):
+            self.accounting_zero_at = self.clock()
+            if self.held_child is None:
+                raise OwnedProcessVerifiedEvidenceRejected()
+            self.accounting_wait = observe_held_process(self.api, self.held_child)
+            self.accounting_wait_at = self.clock()
+        return active
+
+
+def assert_verified_cleanup_observation(native, receipt, returned_at, initial_wait, initial_wait_at):
+    """A later signal categorizes the original assertion failure; it never repairs it."""
+    times = (native.acquired_at, native.acknowledged_at, native.termination_started_at,
+             native.termination_completed_at, native.accounting_zero_at,
+             native.accounting_wait_at, returned_at, initial_wait_at)
+    valid_time = lambda value: type(value) in (int, float) and math.isfinite(value)
+    if (not all(valid_time(value) for value in times) or list(times) != sorted(times) or
+            not valid_time(native.termination_deadline) or
+            native.termination_deadline != native.termination_started_at + 2 or
+            (native.request.timeoutSeconds, native.request.drainSeconds, native.request.terminationSeconds) != (10, .5, 2) or
+            type(native.termination_calls) is not int or native.termination_calls != 1 or native.held_child is None or
+            not native.verified_job or native.verified_job != native.job or
+            not native.verified_root or native.verified_root != native.process or
+            native.closed is not True or not owned.cleanup_receipt(receipt) or
+            receipt['outcome'] != 'descendant-drain-timeout' or receipt['targetExitCode'] != 0):
+        raise OwnedProcessVerifiedEvidenceRejected()
+    for observation in (native.accounting_wait, initial_wait):
+        if observation not in (None, OwnedProcessWaitTimeout):
+            raise observation()
+    if initial_wait is None:
+        if native.accounting_wait is None:
+            if native.accounting_wait_at <= native.termination_deadline:
+                return
+        elif initial_wait_at <= native.termination_deadline:
+            raise OwnedProcessVerifiedAccountingZeroThenSignaled()
+        raise OwnedProcessVerifiedSignalNotObservedInBudget()
+    if native.accounting_wait is not OwnedProcessWaitTimeout:
+        # A process handle cannot become unsignaled after being observed signaled.
+        raise OwnedProcessVerifiedEvidenceRejected()
+    now = native.clock()
+    if not valid_time(now) or now < initial_wait_at:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    milliseconds = max(0, math.floor((native.termination_deadline - now) * 1000))
+    if milliseconds == 0:
+        raise OwnedProcessVerifiedSignalNotObservedInBudget()
+    late_wait = observe_held_process(native.api, native.held_child, milliseconds)
+    observed_at = native.clock()
+    if not valid_time(observed_at) or observed_at < now:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    if late_wait not in (None, OwnedProcessWaitTimeout):
+        raise late_wait()
+    if late_wait is None and observed_at <= native.termination_deadline:
+        raise OwnedProcessVerifiedWaitTimeoutThenSignaled()
+    raise OwnedProcessVerifiedSignalNotObservedInBudget()
+
+
+def supervise_verified_cleanup(request, native, cancelled):
+    receipt = owned.supervise(request, containment=native, cancelled=cancelled)
+    returned_at = native.clock()
+    if native.held_child is None:
+        raise OwnedProcessVerifiedEvidenceRejected()
+    initial_wait = observe_held_process(native.api, native.held_child)
+    initial_wait_at = native.clock()
+    assert_verified_cleanup_observation(native, receipt, returned_at, initial_wait, initial_wait_at)
 
 
 @unittest.skipUnless(os.name == 'nt', 'Actual Windows API acceptance requires Windows')
@@ -165,6 +325,47 @@ class NativeWindowsOwnership(unittest.TestCase):
         self.assertEqual(receipt['outcome'],'descendant-drain-timeout',receipt)
         self.assertTrue(receipt['confirmedTreeEmpty'],receipt)
         assert_held_process_signaled(self.api,handle)
+
+    def test_verified_parent_exit_and_inherited_output_descendant_cleanup(self):
+        proof_file = self.folder/'verified-child.json'
+        acknowledgment = self.folder/'verified-ack'
+        script = '\n'.join((
+            'import subprocess,sys,time,json',
+            'from pathlib import Path',
+            'p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"])',
+            'Path(sys.argv[1]).write_text(json.dumps(p.pid))',
+            'ack=Path(sys.argv[2]); deadline=time.monotonic()+5',
+            'while not ack.exists() and time.monotonic()<deadline: time.sleep(.01)',
+            'if not ack.exists(): sys.exit(124)',
+            'time.sleep(.5)'))
+        request = self.request(['-c', script, str(proof_file), str(acknowledgment)])
+        native = VerifiedCleanupContainment(request)
+        cancelled = threading.Event()
+        failures, handles, completed = [], [], []
+        def run():
+            try:
+                supervise_verified_cleanup(request, native, cancelled)
+                completed.append(True)
+            except BaseException as error:
+                failures.append(error)
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        try:
+            native.acquire_child(self.wait_json(proof_file), handles)
+            native.acknowledge(acknowledgment)
+        finally:
+            if native.acknowledged_at is None:
+                cancelled.set()
+            worker.join(15)
+            # Never invalidate a handle that a live worker might still sample.
+            # The unchanged outer owned-process gate is the final watchdog.
+            if not worker.is_alive():
+                for handle in handles:
+                    self.api.CloseHandle(handle)
+            self.assertFalse(worker.is_alive(), 'Native supervision must be bounded')
+        if failures:
+            raise failures[0]
+        self.assertEqual(completed, [True])
 
     def test_supervisor_death_closes_job_and_only_its_owned_processes(self):
         proof_file=self.folder/'tree.json'

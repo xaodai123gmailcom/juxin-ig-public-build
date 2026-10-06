@@ -230,7 +230,9 @@ DIAGNOSTIC_LIST_FIELDS = ('test_ids', 'failed_test_ids', 'source_locations', 'ob
 DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES = frozenset(('OwnedProcessWaitTimeout',
     'OwnedProcessWaitFailedInvalidHandle', 'OwnedProcessWaitFailedAccessDenied',
     'OwnedProcessWaitFailedOther', 'OwnedProcessWaitFailedErrorUnavailable',
-    'OwnedProcessWaitUnexpected'))
+    'OwnedProcessWaitUnexpected', 'OwnedProcessVerifiedEvidenceRejected',
+    'OwnedProcessVerifiedWaitTimeoutThenSignaled', 'OwnedProcessVerifiedSignalNotObservedInBudget',
+    'OwnedProcessVerifiedAccountingZeroThenSignaled'))
 DIAGNOSTIC_EXCEPTION_CATEGORIES = frozenset(('AssertionError', 'TimeoutError', 'CancelledError',
     'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError')) | DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES
 
