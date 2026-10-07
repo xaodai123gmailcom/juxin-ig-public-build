@@ -1182,7 +1182,8 @@ requireAll(publicCiControls, [
 requireAll(publicInstalledGate, [
   '--pure-ig', '--snapshot-scale', '--collection-completion', '--standalone-nurture',
   '--nurture-cleanup-upgrade', '441552', '602831', 'posting_removed', '$removed.http_status -ne 404',
-  'verify_installed_recovery_r64.py', '-TimeoutSeconds 180', "'120'",
+  'verify_installed_recovery_r64.py', '-TimeoutSeconds 180', "'--timeout', '420'",
+  '-LogPath $recoveryStdout -TimeoutSeconds 540',
 ], 'actual installed source-independent Core, migration, scale and recovery gates');
 requireAll(publicInstalledOracle, [
   'r63_upgrade_proof.py', 'r63_native_proof.py', 'r64_recovery_ui_proof.py',

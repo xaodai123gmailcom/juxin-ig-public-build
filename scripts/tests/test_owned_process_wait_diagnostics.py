@@ -614,7 +614,8 @@ class VerifiedCleanupDiagnostics(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('verified_diagnostic_common', ROOT / 'ci/public_ci_common.py')
         common = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(common)
-        self.assertEqual(len(common.DIAGNOSTIC_EXCEPTION_CATEGORIES), 17)
+        self.assertEqual(len(common.DIAGNOSTIC_EXCEPTION_CATEGORIES), 26)
+        self.assertEqual(len(common.DIAGNOSTIC_EXCEPTION_CATEGORIES - common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES), 17)
         manifest = {'scripts/tests/test_owned_process_windows_r64.py': 'a' * 64}
         for module in ('__main__', 'test_owned_process_windows_r64', 'scripts.tests.test_owned_process_windows_r64'):
             for name in VERIFIED_CATEGORIES:

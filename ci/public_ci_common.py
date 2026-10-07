@@ -242,8 +242,14 @@ DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES = frozenset(('OwnedProcessWaitTimeout',
     'OwnedProcessWaitFailedOther', 'OwnedProcessWaitFailedErrorUnavailable',
     'OwnedProcessWaitUnexpected', 'OwnedProcessVerifiedEvidenceRejected',
     'OwnedProcessVerifiedSignalNotObservedInBudget'))
+DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES = frozenset(('InstalledRecoveryDebuggerTimeout',
+    'InstalledRecoveryRendererTimeout', 'InstalledRecoveryRendererAmbiguous',
+    'InstalledRecoveryPreloadTimeout', 'InstalledRecoveryReadinessTimeout',
+    'InstalledRecoveryApiTimeout', 'InstalledRecoveryShutdownTimeout',
+    'InstalledRecoveryProcessExited', 'InstalledRecoveryTimeout'))
 DIAGNOSTIC_EXCEPTION_CATEGORIES = frozenset(('AssertionError', 'TimeoutError', 'CancelledError',
-    'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError')) | DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES
+    'OSError', 'RuntimeError', 'ValueError', 'TypeError', 'ImportError', 'ModuleNotFoundError')) | \
+    DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES | DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES
 
 
 def diagnostic_test_symbols(manifest, root):
@@ -269,11 +275,16 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT, exception_info=None):
     failure_header = re.compile(r'^(?:FAIL|ERROR): (test_[A-Za-z0-9_]{1,160}) '
         r'\([A-Za-z_][A-Za-z0-9_.]*\)(?:$| )')
     exception_header = re.compile(r'^(?:(?:builtins|asyncio\.exceptions|concurrent\.futures\._base)\.)?('
-        + '|'.join(sorted(DIAGNOSTIC_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
+        + '|'.join(sorted(DIAGNOSTIC_EXCEPTION_CATEGORIES - DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES))
+        + r')(?::(?: |$)|$)')
     # Direct script execution has no module prefix. These are the only native
     # fixture module spellings accepted when unittest imports the same source.
     wait_exception_header = re.compile(r'^(?:scripts\.tests\.)?test_owned_process_windows_r64\.('
         + '|'.join(sorted(DIAGNOSTIC_WAIT_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
+    # Accept only direct execution or the verifier's exact import spellings.
+    # Category observations never include the exception message or module name.
+    installed_exception_header = re.compile(r'^(?:(?:scripts\.)?verify_installed_recovery_r64\.)?('
+        + '|'.join(sorted(DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES)) + r')(?::(?: |$)|$)')
     prefix = str(root).replace('\\', '/').rstrip('/') + '/'
     patterns = (re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+)\", line ([1-9][0-9]{0,6})', re.I),
                 re.compile(re.escape(prefix) + r'([A-Za-z0-9_./-]+):([1-9][0-9]{0,6})(?::|\b)', re.I),
@@ -287,7 +298,8 @@ def parse_diagnostic_tails(tails, manifest, root=ROOT, exception_info=None):
             failed = failure_header.match(line)
             if failed and failed[1] in symbols:
                 failed_tests.add(failed[1])
-            category = exception_header.match(line) or wait_exception_header.match(line)
+            category = (exception_header.match(line) or wait_exception_header.match(line)
+                        or installed_exception_header.match(line))
             if category:
                 categories.add(category[1])
             normalized = line.replace('\\', '/')

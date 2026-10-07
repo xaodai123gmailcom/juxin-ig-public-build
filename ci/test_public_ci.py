@@ -234,6 +234,34 @@ class PublicContracts(unittest.TestCase):
                 ci.contracts()
             self.assertIs(caught.exception,failure)
 
+    def test_installed_wait_mock_suite_is_additive_early_required_contract(self):
+        calls=[]
+        expected=('contract-installed-recovery-wait',
+            ['base-python','-I','-B','-X','utf8',
+             str(Path('/synthetic/scripts/tests/test_installed_recovery_profile_environment_r64.py')),'-v'],180)
+        with patch.object(ci,'ROOT',Path('/synthetic')),\
+             patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
+             patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
+             patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
+            ci.contracts()
+            self.assertEqual([call for call in calls if call[0]==expected[0]],[expected])
+            labels=[call[0] for call in calls]
+            self.assertEqual(labels.index(expected[0]),labels.index('contract-owned-process-wait-diagnostics')+1)
+            self.assertLess(labels.index(expected[0]),labels.index('contract-test-public-ci-py'))
+            preceding=calls[:calls.index(expected)+1]
+            calls.clear();failure=RuntimeError('mock installed recovery wait contract failure')
+            def fail(*args):
+                calls.append(args)
+                if args[0]==expected[0]:raise failure
+            with patch.object(ci,'run_owned',side_effect=fail),self.assertRaises(RuntimeError) as caught:
+                ci.contracts()
+            self.assertIs(caught.exception,failure)
+            self.assertEqual(calls,preceding)
+        workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
+        self.assertLess(workflow.index('ci/public_ci.py contracts'),workflow.index('ci/public_ci.py early'))
+        self.assertLess(workflow.index('ci/public_ci.py early'),workflow.index('ci/public_ci.py build'))
+        self.assertLess(workflow.index('ci/public_ci.py build'),workflow.index('ci/public_ci.py installed'))
+
     def test_owned_descendant_prechecks_use_both_interpreters_before_dependencies(self):
         calls=[];root=Path('/synthetic')
         native=str(root/'scripts/tests/test_owned_process_windows_r64.py')
@@ -327,7 +355,8 @@ class PublicContracts(unittest.TestCase):
                       'performance_indexes_verified.Count -ne 3','compact_wire.canonical_rows_equal',
                       'normal_restart.retained_data','pure_ig_upgrade.ig_identity_hash_preserved',
                       'completed_card_dismissal','repeated_startup_idempotent','four_card_totals',
-                      'scripts\\verify_installed_recovery_r64.py',"'120'",'-TimeoutSeconds 180',
+                      'scripts\\verify_installed_recovery_r64.py',"'--timeout', '420'",'-TimeoutSeconds 180',
+                      '-LogPath $recoveryStdout -TimeoutSeconds 540',
                       "'^INSTALLED_RECOVERY_R64=PASS '"):
             self.assertIn(token,text)
         self.assertLess(text.index('--nurture-cleanup-upgrade'),text.index('scripts\\verify_installed_recovery_r64.py'))
@@ -548,10 +577,11 @@ class PublicContracts(unittest.TestCase):
         record={'gate':'x'*96,'outcome':'target-exited-nonzero','exit_code':-2147483648,
             'diagnostic_parse_succeeded':True,'test_ids':['test_'+('a'*155)]*20,
             'failed_test_ids':['test_'+('z'*155)]*20,
-            'observed_exception_categories':sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES),
+            'observed_exception_categories':sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES)[:20],
             'source_locations':[{'file':('a'*3000)+'.py','line':9999999}]*20,
             **{field+'_omitted':0 for field in common.DIAGNOSTIC_LIST_FIELDS}}
         record['test_ids_omitted']=7;record['failed_test_ids_omitted']=11;record['source_locations_omitted']=3
+        record['observed_exception_categories_omitted']=max(0,len(common.DIAGNOSTIC_EXCEPTION_CATEGORIES)-20)
         summary=common.bound_diagnostic_records([copy.deepcopy(record) for _ in range(32)])
         self.assertLessEqual(len(json.dumps(summary,ensure_ascii=True,sort_keys=True,indent=2).encode()),24576)
         self.assertGreater(summary['records_omitted'],0)
@@ -563,6 +593,7 @@ class PublicContracts(unittest.TestCase):
         for item in summary['records']:
             self.assertLessEqual(len(json.dumps(item,ensure_ascii=True,sort_keys=True,indent=2).encode()),4096)
             for field in common.DIAGNOSTIC_LIST_FIELDS:
+                self.assertLessEqual(len(item[field]),20)
                 self.assertEqual(len(item[field])+item[field+'_omitted'],len(record[field])+record[field+'_omitted'])
         self.assertEqual(len(record['test_ids']),20)
         with tempfile.TemporaryDirectory() as directory:
@@ -673,11 +704,16 @@ class PublicContracts(unittest.TestCase):
             self.assertEqual(value['test_ids'],names[:20]);self.assertEqual(value['test_ids_omitted'],27)
             self.assertEqual(value['failed_test_ids'],names[23:43]);self.assertEqual(value['failed_test_ids_omitted'],4)
             self.assertEqual(len(value['source_locations']),20);self.assertEqual(value['source_locations_omitted'],9)
-            self.assertEqual(value['observed_exception_categories'],sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES))
-            self.assertEqual(value['observed_exception_categories_omitted'],0)
+            categories=sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES)
+            self.assertEqual(value['observed_exception_categories'],categories[:20])
+            self.assertEqual(value['observed_exception_categories_omitted'],max(0,len(categories)-20))
             record=dict(value,gate='mock-gate',outcome='target-exited-nonzero',exit_code=1,diagnostic_parse_succeeded=True)
             summary=common.bound_diagnostic_records([record])
-            self.assertEqual(summary['detail_items_omitted'],40)
+            self.assertEqual(summary['detail_items_omitted'],40+max(0,len(categories)-20))
+            common.write_json(root/'SOURCE_SHA256.json',{'test_fixture.py':'a'*64})
+            common.write_json(root/'failures'/('a'*32+'.json'),record)
+            with patch.object(common,'ROOT',root),patch.object(common,'state_root',return_value=root):
+                self.assertEqual(common.failure_diagnostics(),summary)
 
     def test_failure_diagnostic_export_rejects_unsealed_types_arrays_enums_and_counts(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -696,6 +732,7 @@ class PublicContracts(unittest.TestCase):
                 ('failed_test_ids',['test_private_secret']),('failed_test_ids',names[:21]),
                 ('failed_test_ids',names[:2][::-1]),('failed_test_ids',[names[0],names[0]]),
                 ('failed_test_ids',[None]),('observed_exception_categories',['PrivateSecretError']),
+                ('observed_exception_categories',sorted(common.DIAGNOSTIC_EXCEPTION_CATEGORIES)[:21]),
                 ('observed_exception_categories',['ValueError','AssertionError']),
                 ('observed_exception_categories',['AssertionError','AssertionError']),
                 ('source_locations',[{'file':'/home/private/profile.py','line':1}]),
@@ -752,6 +789,94 @@ class PublicContracts(unittest.TestCase):
             encoded=json.dumps(parsed)
             for private in ('private','987654321','123456789','876543210'):
                 self.assertNotIn(private,encoded)
+
+    def test_installed_diagnostic_categories_match_exact_source_exception_classes(self):
+        expected=frozenset(('InstalledRecoveryDebuggerTimeout','InstalledRecoveryRendererTimeout',
+            'InstalledRecoveryRendererAmbiguous','InstalledRecoveryPreloadTimeout',
+            'InstalledRecoveryReadinessTimeout','InstalledRecoveryApiTimeout',
+            'InstalledRecoveryShutdownTimeout','InstalledRecoveryProcessExited','InstalledRecoveryTimeout'))
+        self.assertEqual(common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES,expected)
+        self.assertEqual(len(common.DIAGNOSTIC_EXCEPTION_CATEGORIES),26)
+        tree=ast.parse((HERE.parent/'scripts/verify_installed_recovery_r64.py').read_text())
+        classes=[node for node in ast.walk(tree) if isinstance(node,ast.ClassDef)
+                 and node.name.startswith('InstalledRecovery')]
+        self.assertEqual({node.name for node in classes},expected)
+        self.assertEqual(len(classes),len(expected))
+        for node in classes:
+            self.assertIn(node,tree.body)
+            self.assertEqual([ast.dump(base) for base in node.bases],[ast.dump(ast.Name(id='RuntimeError',ctx=ast.Load()))])
+
+    def test_installed_diagnostic_categories_reject_unreviewed_qualification_and_lookalikes(self):
+        modules=('','verify_installed_recovery_r64.','scripts.verify_installed_recovery_r64.')
+        for name in common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES:
+            invalid=[prefix+name+': private-value' for prefix in (
+                'private_module.','private_module.scripts.verify_installed_recovery_r64.',
+                'scripts.tests.verify_installed_recovery_r64.','verify_installed_recovery_r64_private.',
+                'builtins.','asyncio.exceptions.','concurrent.futures._base.','__main__.','INFO ','  ')]
+            invalid += [module+suffix for module in modules for suffix in (
+                name+'Private: private-value','Private'+name+': private-value',
+                name+':private-value',name+':\tprivate-value',name+'(private-value)')]
+            with self.subTest(name=name):
+                parsed=common.parse_diagnostic_tails(['\n'.join(invalid)],{},HERE.parent)
+                self.assertEqual(parsed['observed_exception_categories'],[])
+                for module in modules:
+                    for suffix in ('',':',': private-value'):
+                        parsed=common.parse_diagnostic_tails([module+name+suffix],{},HERE.parent)
+                        self.assertEqual(parsed['observed_exception_categories'],[name])
+                        self.assertNotIn('private',json.dumps(parsed))
+
+    def test_installed_diagnostic_tracebacks_export_only_categories_in_three_bounded_json_files(self):
+        tree=ast.parse((HERE.parent/'scripts/verify_installed_recovery_r64.py').read_text())
+        classes=[node for node in tree.body if isinstance(node,ast.ClassDef)
+                 and node.name in common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES]
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);relative='scripts/verify_installed_recovery_r64.py'
+            source=root/relative;source.parent.mkdir();source.write_text('raise problem\n')
+            common.write_json(root/'SOURCE_SHA256.json',{relative:'a'*64})
+            private='private-token https://private.invalid/debug C:\\private-profile\\data.json'
+            log=root/'installed-child.log';stream=io.StringIO()
+            for module in ('__main__','verify_installed_recovery_r64','scripts.verify_installed_recovery_r64'):
+                scope={'__name__':module}
+                exec(compile(ast.Module(body=classes,type_ignores=[]),str(source),'exec'),scope)
+                for name in sorted(common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES):
+                    try:
+                        exec(compile(source.read_text(),str(source),'exec'),{'problem':scope[name](private)})
+                    except RuntimeError:
+                        traceback.print_exc(file=stream)
+            log.write_text(stream.getvalue(),encoding='utf-8')
+            self.assertLess(log.stat().st_size,32768)
+            state={'run':{'fixture':True},'source_provenance':identity(),'nonce':'f'*32,'started_ns':1}
+            with patch.object(common,'ROOT',root),patch.object(common,'state_root',return_value=root),\
+                 patch.object(ci,'state_root',return_value=root),patch.object(ci,'verify_run_state',return_value=state),\
+                 patch.object(ci,'phase_status',return_value='failed'),patch.object(ci,'source_identity',return_value=identity()):
+                common.save_failure_diagnostic('installed-recovery-child',paths=(log,))
+                summary=common.failure_diagnostics()
+                ci.export()
+                diagnostic=next((root/'failures').iterdir())
+                record=summary['records'][0]
+                for name in common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES:
+                    for invalid in ('scripts.verify_installed_recovery_r64.'+name,name+': private-value',name+'Private'):
+                        bad=dict(record,observed_exception_categories=[invalid])
+                        diagnostic.write_text(json.dumps(bad),encoding='utf-8')
+                        with self.subTest(invalid=invalid),self.assertRaises(RuntimeError):
+                            common.failure_diagnostics()
+            self.assertEqual(record['observed_exception_categories'],sorted(common.DIAGNOSTIC_INSTALLED_EXCEPTION_CATEGORIES))
+            self.assertEqual(record['source_locations'],[{'file':relative,'line':1}])
+            self.assertTrue(record['diagnostic_parse_succeeded'])
+            self.assertTrue(all(record[field+'_omitted']==0 for field in common.DIAGNOSTIC_LIST_FIELDS))
+            files=list((root/'public').iterdir())
+            self.assertEqual({path.name for path in files},set(common.PUBLIC_FILES))
+            exported=common.read_json(root/'public/run-summary.json')
+            self.assertEqual(exported['failure_diagnostics'],summary)
+            self.assertFalse(exported['all_required_stages_passed'])
+            for path in files:
+                self.assertLessEqual(path.stat().st_size,65536)
+                value=common.read_json(path)
+                for field in ('binary_exported','raw_logs_exported','profile_or_source_exported'):
+                    self.assertIs(value[field],False)
+                for secret in (private,'private-token','private.invalid','private-profile',str(root),
+                               'Traceback','raise problem','verify_installed_recovery_r64.InstalledRecovery'):
+                    self.assertNotIn(secret,json.dumps(value))
 
 
 class ParentFailureDiagnostics(unittest.TestCase):

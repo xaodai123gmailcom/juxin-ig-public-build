@@ -55,8 +55,10 @@ $installedAppExe = Join-Path $installRoot ($package.build.productName + '.exe')
 if (!(Test-Path -LiteralPath $installedAppExe)) { throw 'Installed desktop executable is missing' }
 $recoveryStdout = Join-Path $PWD 'installer-output\installed-recovery-r64-stdout-full.log'
 $recoveryStderr = Join-Path $PWD 'installer-output\installed-recovery-r64-stderr-full.log'
-$recoveryArguments = @('-I', '-X', 'utf8', 'scripts\verify_installed_recovery_r64.py', '--executable', $installedAppExe, '--core-executable', $exe, '--core-report', 'installer-output\installed-scale-verification.json', '--log', 'installer-output\installed-recovery-r64.log', '--report', 'installer-output\installed-recovery-r64.json', '--timeout', '120')
-$RecoveryExitCode = Invoke-IgacNativeCommandWithLog -FilePath $python -ArgumentList $recoveryArguments -LogPath $recoveryStdout -TimeoutSeconds 180
+# Allow 180s first-Core startup plus bounded debugger/window/preload/API/shutdown phases.
+# The outer bound includes owned-runtime cleanup after the verifier's 420s watchdog.
+$recoveryArguments = @('-I', '-X', 'utf8', 'scripts\verify_installed_recovery_r64.py', '--executable', $installedAppExe, '--core-executable', $exe, '--core-report', 'installer-output\installed-scale-verification.json', '--log', 'installer-output\installed-recovery-r64.log', '--report', 'installer-output\installed-recovery-r64.json', '--timeout', '420')
+$RecoveryExitCode = Invoke-IgacNativeCommandWithLog -FilePath $python -ArgumentList $recoveryArguments -LogPath $recoveryStdout -TimeoutSeconds 540
 if ($RecoveryExitCode -ne 0) { throw 'Actual installed desktop R6.4 API recovery proof failed' }
 if (!(Select-String -LiteralPath $recoveryStdout -Pattern '^INSTALLED_RECOVERY_R64=PASS ' -Quiet)) { throw 'Actual installed recovery success marker is missing' }
 $recovery = [IO.File]::ReadAllText((Join-Path $PWD 'installer-output\installed-recovery-r64.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json

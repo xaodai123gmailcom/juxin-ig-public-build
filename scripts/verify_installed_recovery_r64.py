@@ -8,7 +8,7 @@ an Instagram account. It seeds a fresh legacy DB before launching either EXE.
 """
 from __future__ import annotations
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager
 import hashlib
 import importlib.util
 import json
@@ -56,6 +56,72 @@ FLAGS = ('authenticated_api', 'unauthenticated_refused', 'foreign_owner_refused'
     'active_owner_preserved',
     'hidden_task_absent_from_list', 'exact_hidden_task_located', 'stale_stop_refused',
     'normal_safe_stop', 'safe_collection_cleanup', 'material_history_dedup_preserved', 'no_share')
+
+
+# The desktop waits up to 180s for its first frozen Core start before creating
+# the window. Keep that allowance distinct from renderer/preload/API evidence.
+INSTALLED_PHASE_SECONDS = {'debugger': 30, 'renderer': 210, 'preload': 15,
+    'readiness': 30, 'api': 60, 'shutdown': 60}
+INSTALLED_TIMEOUT_SECONDS = 420  # 405s of phase caps plus 15s bookkeeping.
+
+
+class InstalledRecoveryDebuggerTimeout(RuntimeError): pass
+class InstalledRecoveryRendererTimeout(RuntimeError): pass
+class InstalledRecoveryRendererAmbiguous(RuntimeError): pass
+class InstalledRecoveryPreloadTimeout(RuntimeError): pass
+class InstalledRecoveryReadinessTimeout(RuntimeError): pass
+class InstalledRecoveryApiTimeout(RuntimeError): pass
+class InstalledRecoveryShutdownTimeout(RuntimeError): pass
+class InstalledRecoveryProcessExited(RuntimeError): pass
+class InstalledRecoveryTimeout(RuntimeError): pass
+
+
+def require_owned_process(process):
+    if process.poll() is not None:
+        raise InstalledRecoveryProcessExited('Owned installed desktop exited before proof completion')
+
+
+@contextmanager
+def installed_phase(process, end, seconds, error_type, *, cleanup):
+    """Bound even synchronous CDP/evaluate calls, which have no API timeout."""
+    require(math.isfinite(end) and math.isfinite(seconds) and seconds > 0,
+        'Installed phase deadline must be finite and positive')
+    now = time.monotonic()
+    deadline = min(end, now + seconds)
+    category = InstalledRecoveryTimeout if end < now + seconds else error_type
+    if deadline <= now:
+        raise category('Installed recovery phase deadline expired')
+    expired = threading.Event()
+    gate = threading.Lock()
+    armed = True
+    def terminate():
+        with gate:
+            if not armed:
+                return
+            expired.set()
+        try: cleanup()
+        except Exception: pass  # The enclosing finally retries owned cleanup.
+    watchdog = threading.Timer(deadline - now, terminate)
+    watchdog.daemon = True; watchdog.start()
+    try:
+        yield deadline
+        if expired.is_set() or time.monotonic() >= deadline:
+            raise category('Installed recovery phase deadline expired')
+    except Exception:
+        if expired.is_set():
+            raise category('Installed recovery phase deadline expired') from None
+        if error_type is not InstalledRecoveryShutdownTimeout:
+            require_owned_process(process)
+        raise
+    finally:
+        with gate:
+            armed = False
+        watchdog.cancel()
+        # cancel() alone cannot stop an already-entered Timer callback. Join it
+        # before another phase can begin; recheck expiry after that boundary.
+        watchdog.join(timeout=45)
+        if watchdog.is_alive() or expired.is_set() or time.monotonic() >= deadline:
+            raise category('Installed recovery phase deadline expired') from None
 
 
 def environment():
@@ -166,7 +232,7 @@ def exercise(api, directory, manifest, *, timeout=60):
         'located_task': blocker, 'safety_fence': 'posting-feature-removed-no-execution-or-owner-theft'}
 
 
-def exact_renderer(browser, app_root):
+def exact_renderer(browser, app_root, *, check_preload=True):
     """Select only the packaged main renderer, never first tab/IG account page."""
     from urllib.parse import unquote, urlparse
     candidates = []
@@ -175,11 +241,60 @@ def exact_renderer(browser, app_root):
             parsed = urlparse(page.url)
             path = unquote(parsed.path).replace('\\', '/').lower()
             expected = str(app_root).replace('\\', '/').lower().rstrip('/') + '/resources/app.asar/renderer/dist/index.html'
-            if parsed.scheme == 'file' and path.lstrip('/') == expected.lstrip('/'):
+            if parsed.scheme == 'file' and not parsed.netloc and not parsed.query and path.lstrip('/') == expected.lstrip('/'):
                 candidates.append(page)
-    require(len(candidates) == 1, 'Expected exactly one packaged main renderer target')
-    require(candidates[0].evaluate("typeof window.collectorCore?.request") == 'function', 'Main preload API is missing')
+    if len(candidates) > 1:
+        raise InstalledRecoveryRendererAmbiguous('Multiple packaged main renderer targets')
+    if not candidates:
+        require(not check_preload, 'Expected exactly one packaged main renderer target')
+        return None
+    if check_preload:
+        require(candidates[0].evaluate("typeof window.collectorCore?.request") == 'function', 'Main preload API is missing')
     return candidates[0]
+
+
+def dispatch_browser_events(browser, deadline):
+    """A bounded Playwright wait dispatches page AND navigation notifications.
+
+    Reading contexts/pages/url followed by time.sleep only reads cached state.
+    Waiting on the default owned context does not inspect or select any tab.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    require(bool(browser.contexts), 'Owned CDP browser has no default context')
+    remaining_ms = (deadline - time.monotonic()) * 1000
+    if remaining_ms <= 0:
+        return
+    try:
+        browser.contexts[0].wait_for_event('page', timeout=min(100, remaining_ms))
+    except PlaywrightTimeoutError:
+        pass  # Expected short polling tick; all other protocol errors fail.
+
+
+def wait_installed_renderer(browser, app_root, process, deadline):
+    while time.monotonic() < deadline:
+        require_owned_process(process)
+        page = exact_renderer(browser, app_root, check_preload=False)
+        if page is not None:
+            return page
+        dispatch_browser_events(browser, deadline)
+    require_owned_process(process)
+    raise InstalledRecoveryRendererTimeout('Packaged main renderer target was not observed before deadline')
+
+
+def wait_installed_preload(browser, app_root, process, page, deadline):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    expected_url = page.url.split('#', 1)[0]
+    require_owned_process(process)
+    try:
+        page.wait_for_function("url => location.href.split('#', 1)[0] === url && typeof window.collectorCore?.request === 'function'",
+            arg=expected_url, timeout=max(1, (deadline - time.monotonic()) * 1000))
+    except PlaywrightTimeoutError:
+        require_owned_process(process)
+        raise InstalledRecoveryPreloadTimeout('Packaged renderer preload API was not observed before deadline') from None
+    require_owned_process(process)
+    require(exact_renderer(browser, app_root) is page and page.url.split('#', 1)[0] == expected_url,
+        'Packaged main renderer changed while waiting for preload')
+    return expected_url
 
 
 def installed_core_process(desktop_pid, executable):
@@ -268,7 +383,7 @@ def validate_proof(proof, *, executable, core_executable, require_windows=True):
     return proof
 
 
-def probe_installed(executable, core_executable, core_report, log_path, *, timeout=120):
+def probe_installed(executable, core_executable, core_report, log_path, *, timeout=INSTALLED_TIMEOUT_SECONDS):
     require(sys.platform == 'win32', 'Actual installed-user proof requires Windows')
     require(math.isfinite(timeout) and timeout > 0, 'Recovery process deadline must be finite and positive')
     executable, core_executable = Path(executable).resolve(strict=True), Path(core_executable).resolve(strict=True)
@@ -301,56 +416,110 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
             timed_out = threading.Event()
             runtime = None
             shutdown_complete = False
+            failed = False
+            cleanup_lock = threading.Lock()
+            cleaned_identity = object()
+            def cleanup_owned():
+                nonlocal cleaned_identity
+                if not cleanup_lock.acquire(timeout=45):
+                    raise RuntimeError('Owned runtime cleanup remained busy')
+                try:
+                    identity = None if runtime is None else runtime['pid']
+                    if cleaned_identity != identity:
+                        stop_owned_runtime(process, runtime)
+                        cleaned_identity = identity
+                finally:
+                    cleanup_lock.release()
+            watchdog_gate = threading.Lock()
+            watchdog_armed = True
             def terminate_owned_tree():
-                timed_out.set()
-                try: stop_owned_runtime(process, runtime)
+                with watchdog_gate:
+                    if not watchdog_armed:
+                        return
+                    timed_out.set()
+                try: cleanup_owned()
                 except Exception: pass  # Timeout always fails; finally retries bounded cleanup.
             watchdog = threading.Timer(timeout, terminate_owned_tree)
             watchdog.daemon = True; watchdog.start()
             try:
                 with sync_playwright() as playwright:
-                    browser = None
-                    while browser is None:
-                        require(process.poll() is None and time.monotonic() < end, 'Installed desktop failed to expose its owned loopback debugger before deadline')
-                        try: browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:' + str(debug_port), timeout=1000)
-                        except Exception: time.sleep(.1)
-                    page = None
-                    while page is None:
-                        require(time.monotonic() < end, 'Packaged main renderer did not become ready')
-                        try: page = exact_renderer(browser, executable.parent)
-                        except RuntimeError: time.sleep(.1)
-                    page.set_default_timeout(10000)
+                    from playwright.sync_api import Error as PlaywrightError
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['debugger'], InstalledRecoveryDebuggerTimeout, cleanup=cleanup_owned) as deadline:
+                        browser = None
+                        while browser is None:
+                            require_owned_process(process)
+                            if time.monotonic() >= deadline:
+                                raise InstalledRecoveryDebuggerTimeout('Owned loopback debugger was not observed before deadline')
+                            try:
+                                browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:' + str(debug_port),
+                                    timeout=max(1, min(1000, (deadline - time.monotonic()) * 1000)))
+                            except PlaywrightError:
+                                require_owned_process(process)
+                                time.sleep(min(.1, max(0, deadline - time.monotonic())))
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['renderer'], InstalledRecoveryRendererTimeout, cleanup=cleanup_owned) as deadline:
+                        page = wait_installed_renderer(browser, executable.parent, process, deadline)
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['preload'], InstalledRecoveryPreloadTimeout, cleanup=cleanup_owned) as deadline:
+                        renderer_url = wait_installed_preload(browser, executable.parent, process, page, deadline)
                     def api(path, body=None):
-                        value = page.evaluate("""async ({path,body}) => {
+                        require_owned_process(process)
+                        require(exact_renderer(browser, executable.parent, check_preload=False) is page,
+                            'Packaged main renderer changed before API request')
+                        value = page.evaluate("""async ({url,path,body}) => {
+                            if (location.href.split('#', 1)[0] !== url || typeof window.collectorCore?.request !== 'function')
+                                throw new Error('Packaged main renderer/preload changed');
                             try { return {ok:true,transport:'desktop-ipc',body:await window.collectorCore.request(path,body===null?{}:{method:'POST',body})}; }
                             catch(error) { const text=String(error);const match=text.match(/(?:请求失败[:：]\\s*|status[^0-9]*)([45][0-9]{2})/);return {ok:false,transport:'desktop-ipc',status:match?Number(match[1]):null,error:text}; }
-                        }""", {'path': path, 'body': body})
+                        }""", {'url': renderer_url, 'path': path, 'body': body})
+                        require_owned_process(process)
                         return value
-                    while 'Missing application session token' not in str(api('/api/studio/snapshot').get('error', '')):
-                        require(time.monotonic() < end, 'Installed Core did not become ready')
-                        time.sleep(.1)
-                    runtime = installed_core_process(process.pid, core_executable)
-                    ready_perf_ns = time.perf_counter_ns()
-                    result = exercise(api, data, manifest, timeout=max(1, end - time.monotonic() - 20))
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['readiness'], InstalledRecoveryReadinessTimeout, cleanup=cleanup_owned) as deadline:
+                        while True:
+                            if time.monotonic() >= deadline:
+                                raise InstalledRecoveryReadinessTimeout('Trusted renderer API session guard was not observed before deadline')
+                            response = api('/api/studio/snapshot')
+                            if response.get('ok') is False and 'Missing application session token' in str(response.get('error', '')):
+                                break
+                            dispatch_browser_events(browser, deadline)
+                        runtime = installed_core_process(process.pid, core_executable)
+                        ready_perf_ns = time.perf_counter_ns()
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['api'], InstalledRecoveryApiTimeout, cleanup=cleanup_owned) as deadline:
+                        result = exercise(api, data, manifest, timeout=deadline - time.monotonic())
                     # Browser.close reaches Electron's real before-quit path,
                     # which drains the Core and owns its shutdown deadline.
-                    cdp = browser.new_browser_cdp_session()
-                    try: cdp.send('Browser.close')
-                    except Exception: pass  # CDP may disconnect before replying.
-                    process.wait(timeout=max(1, end - time.monotonic()))
-                    require(process.returncode == 0, 'Installed desktop shutdown was not clean')
-                    # The desktop must have reaped its exact Core, not orphaned it.
-                    query = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'if(Get-Process -Id ' + str(runtime['pid']) + ' -ErrorAction SilentlyContinue){exit 9}'], timeout=10)
-                    require(query.returncode == 0, 'Installed desktop left its Core alive')
+                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['shutdown'], InstalledRecoveryShutdownTimeout, cleanup=cleanup_owned) as deadline:
+                        cdp = browser.new_browser_cdp_session()
+                        try: cdp.send('Browser.close')
+                        except PlaywrightError: pass  # CDP may disconnect before replying; process/child exit still required.
+                        try: process.wait(timeout=max(.001, deadline - time.monotonic()))
+                        except subprocess.TimeoutExpired:
+                            raise InstalledRecoveryShutdownTimeout('Owned installed desktop did not shut down before deadline') from None
+                        require(process.returncode == 0, 'Installed desktop shutdown was not clean')
+                        # The desktop must have reaped its exact Core, not orphaned it.
+                        query = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'if(Get-Process -Id ' + str(runtime['pid']) + ' -ErrorAction SilentlyContinue){exit 9}'], timeout=min(10, max(.001, deadline - time.monotonic())))
+                        require(query.returncode == 0, 'Installed desktop left its Core alive')
                     shutdown_complete = True
+            except Exception:
+                failed = True
+                if timed_out.is_set():
+                    raise InstalledRecoveryTimeout('Installed recovery process deadline expired') from None
+                raise
             finally:
+                with watchdog_gate:
+                    watchdog_armed = False
                 watchdog.cancel()
+                watchdog.join(timeout=45)
+                if watchdog.is_alive() or time.monotonic() >= end:
+                    timed_out.set()
                 if not shutdown_complete or timed_out.is_set():
                     if runtime is None:
                         try: runtime = installed_core_process(process.pid, core_executable)
                         except Exception: pass
-                    stop_owned_runtime(process, runtime)
-        require(not timed_out.is_set(), 'Installed recovery process deadline expired')
+                    try: cleanup_owned()
+                    except Exception:
+                        if not failed and not timed_out.is_set():
+                            raise
+        if timed_out.is_set():
+            raise InstalledRecoveryTimeout('Installed recovery process deadline expired')
         require(fixture.legacy.file_sha256(manifest_path) == manifest_hash, 'Installed app changed the external input manifest')
         result['persisted_state'] = fixture.inspect(data, manifest, phase='complete')
         proof = {**result, **binding, 'desktop_app_asar_sha256': fixture.legacy.file_sha256(executable.parent / 'resources/app.asar'), 'verified': True, 'contract': fixture.CONTRACT, 'platform': sys.platform,
@@ -371,7 +540,8 @@ def main():
     parser.add_argument('--core-report', type=Path, required=True)
     parser.add_argument('--log', type=Path, required=True)
     parser.add_argument('--report', type=Path, required=True)
-    parser.add_argument('--timeout', type=float, default=120)
+    parser.add_argument('--timeout', type=float, default=INSTALLED_TIMEOUT_SECONDS,
+        help='Overall owned-runtime deadline in seconds; phase caps remain independent')
     args = parser.parse_args()
     args.report.unlink(missing_ok=True)
     try:

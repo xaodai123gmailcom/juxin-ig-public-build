@@ -43,6 +43,8 @@ def contracts():
               str(ROOT / 'ci/public_ci_unicode.py'), 'layout-import-preflight'], 90)
     run_owned('contract-owned-process-wait-diagnostics', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_owned_process_wait_diagnostics.py'), '-v'], 180)
+    run_owned('contract-installed-recovery-wait', [sys.executable, '-I', '-B', '-X', 'utf8',
+              str(ROOT / 'scripts/tests/test_installed_recovery_profile_environment_r64.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
                  'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
                  'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py'):

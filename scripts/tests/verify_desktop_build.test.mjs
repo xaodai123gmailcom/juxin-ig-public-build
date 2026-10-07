@@ -343,3 +343,12 @@ test('pure IG contract rejects changing the fixed platform or source queue', () 
     'targets: []', 'targets: draftSeeds.targets',
     /pure IG collection contract is missing contract marker/);
 });
+
+test('installed recovery retains its finite whole-runtime and outer cleanup budgets', () => {
+  rejectMutation('ci/public_ci_verify_installed.ps1',
+    "'--timeout', '420'", "'--timeout', '120'",
+    /actual installed source-independent Core, migration, scale and recovery gates/);
+  rejectMutation('ci/public_ci_verify_installed.ps1',
+    '-LogPath $recoveryStdout -TimeoutSeconds 540', '-LogPath $recoveryStdout -TimeoutSeconds 180',
+    /actual installed source-independent Core, migration, scale and recovery gates/);
+});
