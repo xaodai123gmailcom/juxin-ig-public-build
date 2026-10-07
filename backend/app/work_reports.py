@@ -156,7 +156,7 @@ def _events_sql(platform):
  SELECT kind,julianday(COALESCE(json_extract(result_json,'$.confirmed_at'),updated_at)),profile_id,
         COALESCE(json_extract(result_json,'$.executor'),'{}'),1
  FROM studio_jobs WHERE owner_user_id=:owner AND status='completed'
- AND (kind='nurture' OR (kind='posting' AND json_extract(result_json,'$.published')=1))
+ AND kind='nurture'
  AND report_time(COALESCE(json_extract(result_json,'$.confirmed_at'),updated_at))>=:exact_start
  AND report_time(COALESCE(json_extract(result_json,'$.confirmed_at'),updated_at))<:exact_end
  UNION ALL
@@ -221,8 +221,8 @@ WITH period_evidence AS (
 """.replace("/*platform:username*/", username_platform_sql(platform, "username_norm"))
 
 
-METRICS = ("collection", "check", "added", "nurture", "posting", "follow", "greet", "split", "approved", "confirmed_posting")
-SUMMARY_METRICS = ("collection", "follow", "split", "added", "confirmed_posting")
+METRICS = ("collection", "check", "added", "nurture", "follow", "greet", "split", "approved")
+SUMMARY_METRICS = ("collection", "follow", "split", "added")
 
 
 def _parameters(owner, start, end):
@@ -266,26 +266,6 @@ def history_totals(database, owner: str, start: str, end: str, platform: str | N
 
 
 
-def _confirmed_posting(connection, parameters, *, grouped=False):
-    # Only the dedicated immutable native receipt proves a new-workflow post.
-    # Keep the original Studio posting metric separately for historical CSVs.
-    if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_receipts'").fetchone():
-        return [] if grouped else 0
-    fields = ("'confirmed_posting' AS metric,profile_id,'' AS window_name,username,'' AS instagram_user_id,COUNT(*) AS amount"
-              if grouped else "COUNT(*)")
-    sql = "SELECT " + fields + """
-        FROM posting_receipts WHERE owner_user_id=:owner
-        AND CASE WHEN json_valid(evidence_json) THEN json_extract(evidence_json,'$.verification')='instagram_dialog' ELSE 0 END
-        AND julianday(confirmed_at)>=julianday(:start)-1.0/86400
-        AND julianday(confirmed_at)<julianday(:end)+1.0/86400
-        AND (julianday(confirmed_at)>=julianday(:start)+1.0/86400 OR report_time(confirmed_at)>=:exact_start)
-        AND (julianday(confirmed_at)<julianday(:end)-1.0/86400 OR report_time(confirmed_at)<:exact_end)
-    """
-    if grouped:
-        return connection.execute(sql + " GROUP BY profile_id,username ORDER BY profile_id,username", parameters).fetchall()
-    return int(connection.execute(sql, parameters).fetchone()[0])
-
-
 def work_report(database, owner: str, start: str, end: str, platform: str | None = None, *, summary_only: bool = False) -> dict:
     platform = validate_platform(platform)
     parameters = _parameters(owner, start, end)
@@ -295,7 +275,6 @@ def work_report(database, owner: str, start: str, end: str, platform: str | None
         c.execute("BEGIN")
         if summary_only:
             totals = {key: 0 for key in SUMMARY_METRICS}
-            totals['confirmed_posting'] = _confirmed_posting(c, parameters)
             totals['collection'] = c.execute(_collection_period_sql(platform, identities_only=True) +
                 "SELECT COUNT(*) FROM eligible", parameters).fetchone()[0]
             totals['split'] = c.execute(_split_work_report_sql(platform) +
@@ -329,7 +308,6 @@ def work_report(database, owner: str, start: str, end: str, platform: str | None
                    '' AS window_name,'' AS username,'' AS instagram_user_id,COUNT(*) AS amount
             FROM first_completions WHERE rank=1 GROUP BY COALESCE(source_window_id,'') ORDER BY profile_id
             """, parameters).fetchall()
-        rows += _confirmed_posting(c, parameters, grouped=True)
     totals = {key: 0 for key in METRICS}
     grouped = {}
     for row in rows:

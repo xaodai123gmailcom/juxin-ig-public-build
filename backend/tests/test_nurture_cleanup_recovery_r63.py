@@ -326,22 +326,16 @@ class NurtureCleanupRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(json.loads(self.row(ident)['result_json'])['window_hold'])
         self.assertFalse(self.provider.inside)
 
-    async def test_ready_posting_blocker_identifies_owned_task_and_actionable_module(self):
+    async def test_unclaimed_retired_queue_does_not_block_closed_nurture_recovery(self):
         ident=await self.seed(state='lease_lost')
         from app.posting_schema import initialize_posting_schema
         with self.db.write() as c:
             initialize_posting_schema(c)
             c.execute("""INSERT INTO posting_jobs(id,owner_user_id,request_key,theme,caption,profile_id,status,created_at,updated_at)
                 VALUES('ready-draft',?,'ready-draft','fixture','fixture','w1','ready','2026-10-04','2026-10-04')""",(self.owner,))
-        with self.assertRaises(ConflictError) as error:
-            await self.m.control(self.owner,ident,'retry_cleanup')
-        self.assertIn('发布任务（待发布，任务编号 ready-draft）',str(error.exception))
-        self.assertIn('请到“发布”处理或停止该任务',str(error.exception))
-        self.assertEqual('posting',error.exception.details['module'])
-        self.assertEqual('ready-draft',error.exception.details['job_id'])
-        self.assertEqual([],self.provider.checks)
-        with self.db.write() as c:c.execute("UPDATE posting_jobs SET status='cancelled' WHERE id='ready-draft'")
         self.assertTrue((await self.m.control(self.owner,ident,'retry_cleanup'))['cleanup_reconciled'])
+        with self.db.read() as c:
+            self.assertEqual('ready',c.execute("SELECT status FROM posting_jobs WHERE id='ready-draft'").fetchone()[0])
 
     async def test_foreign_workflow_blocker_does_not_disclose_module_status_or_id(self):
         ident=await self.seed(state='lease_lost');source=self.row(ident)
@@ -354,6 +348,7 @@ class NurtureCleanupRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private-other-job',str(error.exception))
         self.assertEqual({'reason':'unfinished_workflow'},error.exception.details)
         self.assertEqual([],self.provider.checks)
+
 
 
 if __name__=='__main__':unittest.main()

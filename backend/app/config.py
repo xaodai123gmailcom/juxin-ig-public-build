@@ -86,7 +86,6 @@ class Settings:
     session_hours: int = 168
     bind_host: str = "127.0.0.1"
     bind_port: int = 8765
-    pexels_api_key: str | None = field(default=None, repr=False)
     cloud_enabled: bool = False
     supabase_url: str = ""
     supabase_publishable_key: str = field(default="", repr=False)
@@ -127,7 +126,6 @@ class Settings:
             data_dir=data_dir,
             bitbrowser_url=bitbrowser_url.rstrip("/"),
             bitbrowser_api_key=os.environ.get("IGAC_BITBROWSER_API_KEY") or None,
-            pexels_api_key=os.environ.get("IGAC_PEXELS_API_KEY") or None,
             cloud_enabled=cloud_enabled,
             supabase_url=supabase_url,
             supabase_publishable_key=supabase_key,

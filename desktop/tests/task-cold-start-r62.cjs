@@ -1,18 +1,11 @@
 /* Install an offline-only session before the first task navigation, never pre-open. */
 const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const path=require('node:path');
 function fixtureHtml(){
-  const source=fs.readFileSync(path.resolve(__dirname,'../../backend/tests/test_posting_dom.py'),'utf8');
-  const match=source.match(/HTML=r'''([\s\S]*?)'''/);assert.ok(match,'existing offline composer fixture');
-  const avatar='<a href="/fixture_own/" id="own-avatar"><img alt="" width="24" height="24" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22/%3E"></a>';
-  return match[1].replace('id="sidebar"','id="sidebar" role="navigation"')
-    .replace('<div id="entry"',avatar+'<div id="entry"')
-    .replace('</body>',`<script>
-      window.fixtureShares=0;
-      window.share=()=>{window.fixtureShares++;throw Error('Native cold-start gate must stop before Share')};
+  return `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0;background:#101215;color:white;font-family:Arial}nav{position:fixed;left:0;top:0;width:72px;height:100vh;display:flex;flex-direction:column;gap:22px;padding-top:24px}nav a{display:block;margin-left:24px;width:24px;height:24px;color:white}svg{width:24px;height:24px}main{margin-left:260px;padding:50px}</style></head><body>
+    <nav role="navigation"><a href="/"><svg aria-label="首页"><circle cx="12" cy="12" r="8"/></svg></a><a href="/reels/"><svg aria-label="Reels"><rect width="18" height="18"/></svg></a><a href="/direct/inbox/"><svg aria-label="消息"><path d="M2 2L22 2L12 22Z"/></svg></a><a href="/fixture_own/" id="own-avatar"><img alt="" width="24" height="24" src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22/%3E"></a></nav>
+    <main><h1>示例主页</h1></main><script>
       if(location.pathname==='/fixture_own/')document.querySelector('main').innerHTML='<header><h2>fixture_own</h2><a href="/accounts/edit/">编辑主页</a><ul><li>0帖子</li><li><a href="/fixture_own/followers/">0粉丝</a></li><li><a href="/fixture_own/following/">0关注</a></li></ul></header>';
-    </script></body>`);
+    </script></body></html>`;
 }
 async function run({host,python,runPythonProbe}){
   const ensure=host.ensure.bind(host),fixtures=new Map(),html=fixtureHtml();
@@ -37,7 +30,7 @@ async function run({host,python,runPythonProbe}){
     await runPythonProbe(python,'embedded_task_startup_probe_r62.py',{
       IGAC_EMBEDDED_BROWSER_URL:host.url,IGAC_EMBEDDED_BROWSER_TOKEN:host.token,
     });
-    assert.equal(fixtures.size,2);
+    assert.equal(fixtures.size,1);
     for(const record of fixtures.values()){
       assert.ok(record.requests.includes('/'),'real worker navigated from blank to home');
       assert.ok(record.requests.includes('/fixture_own/'),'real worker verified own profile');

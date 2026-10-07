@@ -162,7 +162,6 @@ $BrowserRequirement = Join-Path $Root "build\browsers\juxin-runtime-requirement.
 Remove-Item -LiteralPath $BrowserRequirement -ErrorAction SilentlyContinue
 Remove-Item Env:IGAC_RUNTIME_REQUIREMENT -ErrorAction SilentlyContinue
 Remove-Item Env:IGAC_TEST_CHROMIUM_EXECUTABLE -ErrorAction SilentlyContinue
-Remove-Item Env:IGAC_POSTING_TEST_BROWSER -ErrorAction SilentlyContinue
 Write-Host "Browser build mode: $BrowserMode"
 if ($BrowserMode -eq "installed-chrome") {
     Write-Host "This edition requires installed Google Chrome on every target computer." -ForegroundColor Yellow
@@ -231,18 +230,16 @@ $CleanupNativeExitCode = Invoke-IgacNativeCommandWithLog `
     -LogPath (Join-Path $InstallerOutput "r63-nurture-cleanup-native-full.log")
 if ($CleanupNativeExitCode -ne 0) { throw "Native cleanup guard regression failed." }
 
-# R6.4 additive native fixtures use the compiled production host/components.
-# Both fail closed and have their own complete-process watchdogs.
+# Native collection recovery uses the compiled production host/components.
+# It fails closed and retains its complete-process watchdog.
 $env:JUXIN_REQUIRE_RECOVERY_UI_NATIVE = "1"
-$env:IGAC_CROP_FIXTURE_REPORT = Join-Path $InstallerOutput "r64-crop-icon-native.json"
-$env:IGAC_CROP_FIXTURE_SCREENSHOT = Join-Path $InstallerOutput "r64-crop-icon-native.png"
-$PreviousCropPython = $env:PYTHON
+$PreviousRecoveryPython = $env:PYTHON
 $env:PYTHON = Join-Path $Root ".venv\Scripts\python.exe"
 try {
-    foreach ($R64StaleProof in @("r64-crop-icon-native.json", "r64-crop-icon-native.png", "r64-recovery-ui-native-proof.json", "r64-recovery-ui-native-failure.json")) {
+    foreach ($R64StaleProof in @("r64-recovery-ui-native-proof.json", "r64-recovery-ui-native.failure.json")) {
         Remove-Item -LiteralPath (Join-Path $InstallerOutput $R64StaleProof) -ErrorAction SilentlyContinue
     }
-    foreach ($R64NativeFixture in @("desktop\tests\crop-icon-r64.cjs", "desktop\tests\recovery-ui-native-r64.cjs")) {
+    foreach ($R64NativeFixture in @("desktop\tests\recovery-ui-native-r64.cjs")) {
         $R64NativeExitCode = Invoke-IgacNativeCommandWithLog `
             -FilePath (Join-Path $Root "node_modules\.bin\electron.cmd") `
             -ArgumentList @($R64NativeFixture) `
@@ -250,7 +247,7 @@ try {
         if ($R64NativeExitCode -ne 0) { throw "Required R6.4 native fixture failed: $R64NativeFixture" }
     }
 } finally {
-    if ($null -eq $PreviousCropPython) { Remove-Item Env:PYTHON -ErrorAction SilentlyContinue } else { $env:PYTHON = $PreviousCropPython }
+    if ($null -eq $PreviousRecoveryPython) { Remove-Item Env:PYTHON -ErrorAction SilentlyContinue } else { $env:PYTHON = $PreviousRecoveryPython }
 }
 
 
@@ -268,7 +265,7 @@ foreach ($PureIgPattern in @("test_pure_ig*.py", "test_ig_only_runtime.py", "tes
 $env:IGAC_REQUIRE_PARENT_REELS_BROWSER = "1"
 $env:IGAC_REQUIRE_STANDALONE_NURTURE_BROWSER = "1"
 $env:IGAC_PARENT_REELS_FIXTURE_ARTIFACT_DIR = (Join-Path $InstallerOutput "parent-reels-fixtures")
-foreach ($RepairPattern in @("test_installed_recovery_r64.py", "test_combined_recovery_r64.py", "test_hidden_collection_blocker_r63.py", "test_posting_withdraw*_r63.py", "test_posting_durable_preflight_r63.py", "test_installed_nurture_cleanup_upgrade_r63.py", "test_nurture_cleanup*.py", "test_nurture_closed_profile_guard.py", "test_nurture_missing_lease_surface.py", "test_final_seed_completion_r62.py", "test_screening_factory_recovery_r62.py", "test_standalone_reels_routes_r62.py", "test_standalone_watch_advance_r62.py", "test_nurture_completion_cleanup_r62.py", "test_parent_reels*.py", "test_collector_parent_handoff_r6.py", "test_live_parent_recheck_r6.py", "test_instagram_identity*r62.py", "test_posting_startup_r62.py", "test_posting_retry_r61.py", "test_automatic_gap_rechecks.py", "test_single_gap_recheck_r6.py", "test_standalone_nurture*.py", "test_installed_standalone_nurture_r6.py", "test_installed_posting_workflow_r6.py", "test_pexels_configuration_r6.py", "test_posting_lease_integration_r6.py", "test_posting_api_integration_r6.py", "test_posting_missing_lease_surface_r6.py", "test_recovery_responsiveness_r94.py", "test_internal_pexels_route_r6.py", "test_posting_*_v2.py", "test_confirmed_posting_report_r6.py", "test_installed_work_report_summary_r6.py", "test_work_report_performance_r6.py", "test_report_index_upgrade_r61.py", "test_frozen_service_r94.py", "test_*r97.py", "test_storage_r31.py", "test_completed_card_dismissal_r96.py", "test_installed_completed_card_fixture_r96.py", "test_explicit_source_recheck.py", "test_snapshot_scale_r95.py", "test_platform_scope.py", "test_platform_review_reports_r95.py", "test_instagram_500_report_r95.py", "test_relation_recommendation_tail_r95.py")) {
+foreach ($RepairPattern in @("test_installed_recovery_r64.py", "test_posting_retirement_r65.py", "test_posting_removal_r65.py", "test_combined_recovery_r64.py", "test_hidden_collection_blocker_r63.py", "test_retired_window_fences_r65.py", "test_account_home_lifecycle_r65.py", "test_installed_nurture_cleanup_upgrade_r63.py", "test_nurture_cleanup*.py", "test_nurture_closed_profile_guard.py", "test_nurture_missing_lease_surface.py", "test_final_seed_completion_r62.py", "test_screening_factory_recovery_r62.py", "test_standalone_reels_routes_r62.py", "test_standalone_watch_advance_r62.py", "test_nurture_completion_cleanup_r62.py", "test_parent_reels*.py", "test_collector_parent_handoff_r6.py", "test_live_parent_recheck_r6.py", "test_instagram_identity*r62.py", "test_automatic_gap_rechecks.py", "test_single_gap_recheck_r6.py", "test_standalone_nurture*.py", "test_installed_standalone_nurture_r6.py", "test_recovery_responsiveness_r94.py", "test_installed_work_report_summary_r6.py", "test_work_report_performance_r6.py", "test_report_index_upgrade_r61.py", "test_frozen_service_r94.py", "test_*r97.py", "test_storage_r31.py", "test_completed_card_dismissal_r96.py", "test_installed_completed_card_fixture_r96.py", "test_explicit_source_recheck.py", "test_snapshot_scale_r95.py", "test_platform_scope.py", "test_platform_review_reports_r95.py", "test_instagram_500_report_r95.py", "test_relation_recommendation_tail_r95.py")) {
     $RepairExitCode = Invoke-IgacNativeCommandWithLog `
         -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
         -ArgumentList @("-X", "utf8", "scripts\run_backend_tests.py", "-p", $RepairPattern, "-v") `
@@ -281,7 +278,7 @@ foreach ($RepairPattern in @("test_installed_recovery_r64.py", "test_combined_re
 # Each browser mode executes this gate exactly once. Installed Chrome can fail
 # fast before long historical suites; bundled mode waits for its runtime below.
 function Invoke-IgacInstagramThousandGate {
-    $env:IGAC_REQUIRE_POSTING_BROWSER = "1"
+    $env:IGAC_REQUIRE_COLLECTION_BROWSER = "1"
     try {
         $InstagramThousandExitCode = Invoke-IgacNativeCommandWithLog `
             -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
@@ -289,7 +286,7 @@ function Invoke-IgacInstagramThousandGate {
             -LogPath (Join-Path $InstallerOutput "instagram-thousand-browser-full.log")
         if ($InstagramThousandExitCode -ne 0) { throw "Thousand-person Chrome regression failed." }
     } finally {
-        Remove-Item Env:IGAC_REQUIRE_POSTING_BROWSER -ErrorAction SilentlyContinue
+        Remove-Item Env:IGAC_REQUIRE_COLLECTION_BROWSER -ErrorAction SilentlyContinue
     }
     # The selected browser is now available in both supported build modes.
     $env:IGAC_REQUIRE_SATURATION_BROWSER = "1"
@@ -489,7 +486,6 @@ if ($BrowserMode -eq "installed-chrome") {
     Assert-LastExitCode "Find the required installed Chrome"
     $ChromeCandidate = [IO.File]::ReadAllText($ChromeCandidatePath, [Text.Encoding]::UTF8) | ConvertFrom-Json
     $env:IGAC_TEST_CHROMIUM_EXECUTABLE = [string]$ChromeCandidate.executable
-    $env:IGAC_POSTING_TEST_BROWSER = [string]$ChromeCandidate.executable
 } else {
     & .venv\Scripts\python.exe -m playwright install chromium --no-shell
     if ($LASTEXITCODE -ne 0) {
@@ -537,14 +533,6 @@ $CollectionCompletionR44ExitCode = Invoke-IgacNativeCommandWithLog `
     -LogPath $CollectionCompletionR44Log
 if ($CollectionCompletionR44ExitCode -ne 0) {
     throw "Verify pending-candidate completion, source-end validation and cancellation cleanup failed (exit code: $CollectionCompletionR44ExitCode). See installer-output\collection-completion-r44-full.log."
-}
-# Exercise create/upload acknowledgement boundaries before the real CDP fixture.
-$PostingTransitionExitCode = Invoke-IgacNativeCommandWithLog `
-    -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
-    -ArgumentList @("scripts\run_backend_tests.py", "-p", "test_posting_transition_r80.py", "-v") `
-    -LogPath (Join-Path $InstallerOutput "posting-transition-r80-full.log")
-if ($PostingTransitionExitCode -ne 0) {
-    throw "Verify posting create/upload transitions failed (exit code: $PostingTransitionExitCode). See installer-output\posting-transition-r80-full.log."
 }
 
 # Retained unread pages and unacknowledged window closes keep their ownership.
@@ -805,34 +793,15 @@ if ($PreopenDedupeRegressionExitCode -ne 0) {
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_follow_monitor.py" -v
 Assert-LastExitCode "Verify recommendation filtering, monitor controls, window release and observation history"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio.py" -v
-Assert-LastExitCode "Verify posting, nurture, task controls, owner isolation and window release"
+Assert-LastExitCode "Verify nurture, task controls, owner isolation and window release"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_continuation.py" -v
 Assert-LastExitCode "Verify complete reports, batch creation and restored global deduplication"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio_auto_media.py" -v
-Assert-LastExitCode "Automatic multi-image and optional AI tests"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_posting_workflow.py" -v
-Assert-LastExitCode "Verify posting retry, selection, prepared media and lease safety"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_publisher_submission.py" -v
-Assert-LastExitCode "Verify publishing fence, caption check and uncertain result handling"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_publisher_entry.py" -v
-Assert-LastExitCode "Verify fresh posting homepage, tab cleanup, Chinese create entry and local file upload"
-if ($BrowserMode -eq "bundled") { Remove-Item Env:IGAC_POSTING_TEST_BROWSER -ErrorAction SilentlyContinue }
-$env:IGAC_REQUIRE_POSTING_BROWSER = "1"
+$env:IGAC_REQUIRE_NURTURE_BROWSER = "1"
 # Required real-browser final-source child-pool retirement gate.
 $env:IGAC_REQUIRE_FINAL_SEED_BROWSER = "1"
 $env:IGAC_FINAL_SEED_FIXTURE_ARTIFACT_DIR = (Join-Path $InstallerOutput "final-seed-fixtures")
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_final_seed_browser_r62.py" --case-timeout 90 -v
 Assert-LastExitCode "Verify R6.2 final-source native pool cleanup"
-# Required R6.4 crop-icon compatibility and immediate guard regressions.
-foreach ($CropR64Pattern in @("test_crop_icon_r64.py", "test_crop_guard_r64.py")) {
-    & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p $CropR64Pattern -v
-    Assert-LastExitCode "Verify R6.4 posting crop/icon regression $CropR64Pattern"
-}
-# R6.2 crop and measured-viewport regressions require the real selected browser.
-foreach ($PostingR62Pattern in @("test_posting_crop_transition_r62.py", "test_posting_editing_state_r62.py", "test_original_crop_readiness_r62.py", "test_posting_viewport_labels.py", "test_posting_viewport_lifecycle_r62.py")) {
-    & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p $PostingR62Pattern -v
-    Assert-LastExitCode "Verify R6.2 posting crop/viewport regression $PostingR62Pattern"
-}
 $CollectionR51ExitCode = Invoke-IgacNativeCommandWithLog `
     -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
     -ArgumentList @("-X", "utf8", "scripts\run_backend_tests.py", "-p", "test_*r51.py", "-v") `
@@ -840,10 +809,6 @@ $CollectionR51ExitCode = Invoke-IgacNativeCommandWithLog `
 if ($CollectionR51ExitCode -ne 0) {
     throw "Verify relation DOM selection and confirmed manual control failed (exit code: $CollectionR51ExitCode). See installer-output\collection-manual-r51-full.log."
 }
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_posting_dom.py" -v
-Assert-LastExitCode "Verify real Chromium icon-only posting and file chooser fixtures"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio_cleanup_ui.py" -v
-Assert-LastExitCode "Verify real React media deletion feedback and stale refresh protection"
 $NurtureArchiveExitCode = Invoke-IgacNativeCommandWithLog `
     -FilePath (Join-Path $Root ".venv\Scripts\python.exe") `
     -ArgumentList @("-X", "utf8", "scripts\run_backend_tests.py", "-p", "test_nurture_delete*r41.py", "-v") `
@@ -852,24 +817,14 @@ if ($NurtureArchiveExitCode -ne 0) {
     throw "Verify failed nurture removal, history and React controls failed (exit code: $NurtureArchiveExitCode). See installer-output\nurture-archive-r41-full.log."
 }
 
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_location_popup.py" -v
-Assert-LastExitCode "Verify test_location_popup controlled browser regressions"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_instagram_home.py" -v
 Assert-LastExitCode "Verify test_instagram_home controlled browser regressions"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_nurture_flow.py" -v
 Assert-LastExitCode "Verify test_nurture_flow controlled browser regressions"
-Remove-Item Env:IGAC_REQUIRE_POSTING_BROWSER -ErrorAction SilentlyContinue
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio_drafts.py" -v
-Assert-LastExitCode "Verify test_studio_drafts state protection"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio_history.py" -v
-Assert-LastExitCode "Verify test_studio_history state protection"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_posting_account_stats.py" -v
-Assert-LastExitCode "Verify test_posting_account_stats state protection"
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_studio_cleanup.py" -v
-Assert-LastExitCode "Verify published media cleanup, active task protection and history retention"
+Remove-Item Env:IGAC_REQUIRE_NURTURE_BROWSER -ErrorAction SilentlyContinue
+& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_account_profile_stats.py" -v
+Assert-LastExitCode "Verify account profile statistics and nurture state protection"
 
-& .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_desktop_materials.py" -v
-Assert-LastExitCode "Verify pre-start desktop downloads, retries, isolation and material paging"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_account_workspace.py" -v
 Assert-LastExitCode "Verify account workspace, lock protection and ownership"
 & .venv\Scripts\python.exe -X utf8 scripts\run_backend_tests.py -p "test_account_surface.py" -v

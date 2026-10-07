@@ -16,7 +16,7 @@ $python = (Resolve-Path '.venv\Scripts\python.exe').Path
 & $python scripts\verify_openvino_windows.py frozen --manifest build\openvino-native-manifest.json --dist $core
 if ($LASTEXITCODE -ne 0) { throw 'Installed native model files failed verification' }
 & .\scripts\test_frozen_openvino.ps1 -Executable $exe -LogPath installer-output\installed-openvino-smoke.log -TimeoutSeconds 180
-& $python -I -X utf8 scripts\verify_frozen_core_service.py --executable $exe --log installer-output\installed-core-service-smoke.log --pure-ig --snapshot-scale --collection-completion --standalone-nurture --posting-workflow --nurture-cleanup-upgrade --report installer-output\installed-scale-verification.json
+& $python -I -X utf8 scripts\verify_frozen_core_service.py --executable $exe --log installer-output\installed-core-service-smoke.log --pure-ig --snapshot-scale --collection-completion --standalone-nurture --nurture-cleanup-upgrade --report installer-output\installed-scale-verification.json
 if ($LASTEXITCODE -ne 0) { throw 'Installed Core service failed verification' }
 $scale = [IO.File]::ReadAllText((Join-Path $PWD 'installer-output\installed-scale-verification.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
 if (!$scale.nurture_cleanup_upgrade.verified) { throw 'Installed pre-existing nurture cleanup database upgrade proof is missing' }
@@ -24,7 +24,14 @@ if (!$scale.snapshot_scale.verified -or $scale.snapshot_scale.collected -ne 4415
 if (!$scale.snapshot_scale.legacy_platform_counter_upgrade.verified -or !$scale.snapshot_scale.legacy_platform_counter_upgrade.records_preserved) { throw 'Installed legacy platform counter upgrade check is missing' }
 if ($null -eq $scale.snapshot_scale.platform_snapshot_seconds.instagram) { throw 'Installed platform-scoped snapshots were not verified' }
 if (!$scale.snapshot_scale.work_report_summary.verified) { throw 'Installed work-report summary equality proof is missing' }
-if (!$scale.posting_workflow.verified) { throw 'Installed posting workflow verification is missing' }
+$removed = $scale.posting_removed
+if (!$removed.verified -or $removed.http_status -ne 404 -or $removed.endpoints.Count -ne 3) { throw 'Installed removed-route rejection proof is missing' }
+$removedPaths = @('/api/posting/snapshot', '/api/posting/command', '/api/internal/integrations/pexels')
+$removedMethods = @('GET', 'POST', 'POST')
+for ($i = 0; $i -lt 3; $i++) {
+    if ($removed.endpoints[$i].path -cne $removedPaths[$i] -or $removed.endpoints[$i].method -cne $removedMethods[$i]) { throw 'Installed removed-route rejection target changed' }
+}
+if ($null -ne $scale.posting_workflow) { throw 'Installed report exposes retired workflow' }
 if (!$scale.standalone_nurture.verified) { throw 'Installed standalone nurture verification is missing' }
 if (!$scale.standalone_nurture.cases.verified_playback.verified -or !$scale.standalone_nurture.cases.completed_cleanup_fence.verified -or !$scale.standalone_nurture.cases.completed_history.canonical_singular_and_plural_routes -or !$scale.standalone_nurture.cases.legacy_plan_fence.legacy_wall_time_not_reinterpreted) { throw 'Installed R6.3 nurture playback and confirmed cleanup proof is missing' }
 if (!$scale.collection_completion.single_gap_recheck.verified) { throw 'Installed one-pass gap recheck verification is missing' }
@@ -38,7 +45,7 @@ $dismissal = $scale.snapshot_scale.completed_card_dismissal
 if (!$dismissal.verified -or !$dismissal.persistence_after_restart -or !$dismissal.retained_data -or !$dismissal.platform_isolation) { throw 'Installed completed-card deletion and restart check is missing' }
 $upgrade = $scale.report_index_upgrade
 if (!$upgrade.verified -or !$upgrade.legacy_index_preserved -or !$upgrade.target_period_index_created -or !$upgrade.inventory_dedup_hashes_preserved -or !$upgrade.window_leases_preserved -or !$upgrade.repeated_startup_idempotent -or $upgrade.restart_count -ne 2 -or !$upgrade.synthetic -or $upgrade.user_data_touched) { throw 'Installed R6.1 conflicting-index upgrade proof is missing or invalid' }
-if ($upgrade.five_card_totals.collection -ne 3 -or $upgrade.five_card_totals.follow -ne 1 -or $upgrade.five_card_totals.split -ne 3 -or $upgrade.five_card_totals.added -ne 7 -or $upgrade.five_card_totals.confirmed_posting -ne 1) { throw 'Installed R6.1 five-card totals differ from the fixture' }
+if ($upgrade.four_card_totals.collection -ne 3 -or $upgrade.four_card_totals.follow -ne 1 -or $upgrade.four_card_totals.split -ne 3 -or $upgrade.four_card_totals.added -ne 7) { throw 'Installed R6.1 four-card totals differ from the fixture' }
 $native = [IO.File]::ReadAllText((Join-Path $PWD 'installer-output\embedded-browser-check.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
 if (!$native.verified -or !$native.pythonWorker -or !$native.taskColdStart) { throw 'Native task-owned unopened-window startup proof is missing' }
 # Actual installed desktop and its owned frozen Core must execute the R6.4
@@ -69,7 +76,7 @@ $record = @{
     snapshot_scale = $scale.snapshot_scale
     collection_completion = $scale.collection_completion
     standalone_nurture = $scale.standalone_nurture
-    posting_workflow = $scale.posting_workflow
+    posting_removed = $removed
     pure_instagram_verified = $scale.pure_instagram
     removed_platform_inputs_rejected = $scale.removed_platform_inputs_rejected
     native_models_verified = $true

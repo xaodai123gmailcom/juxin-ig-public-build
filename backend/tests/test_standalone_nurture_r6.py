@@ -233,7 +233,7 @@ class PreparationAndClockTests(unittest.IsolatedAsyncioTestCase):
                 return reels[min(index,len(reels)-1)]
             raise AssertionError('unexpected script')
         page.goto=AsyncMock(side_effect=goto);page.evaluate=AsyncMock(side_effect=evaluate)
-        browser=SimpleNamespace(page=page,worker=SimpleNamespace(open_posting_page=AsyncMock()),checkpoint=AsyncMock(),guard=AsyncMock(),account_snapshot=AsyncMock(),nurture_ready=AsyncMock())
+        browser=SimpleNamespace(page=page,worker=SimpleNamespace(open_account_home_page=AsyncMock()),checkpoint=AsyncMock(),guard=AsyncMock(),account_snapshot=AsyncMock(),nurture_ready=AsyncMock())
         return browser,reads
 
     async def test_profile_counters_and_media_loading_finish_before_reels_clock(self):

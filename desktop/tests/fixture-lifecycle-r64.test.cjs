@@ -8,7 +8,6 @@ const {createFixtureLifecycle,stableGeometry,bounded,cleanupPreservingError,pain
 const {prepareVisibleFixture}=require('./visible-fixture.cjs');
 const {rendererFixtureRead}=require('./renderer-fixture.cjs');
 const {assertLayout,stableNurtureLayout}=require('./nurture-reels-r6.integration.cjs');
-const {assertPostingLayout}=require('./posting-r6.integration.cjs');
 function clock(t) {
   let now=0;t.mock.method(require('node:perf_hooks').performance,'now',()=>now);t.mock.timers.enable({apis:['setTimeout']});
   return ms=>{now+=ms;t.mock.timers.tick(ms)};
@@ -100,9 +99,6 @@ test('stable geometry rejects permanently empty groups and bounds hung evaluator
   await assert.rejects(advance(stableGeometry(async()=>({width:1000,cards:[]}),'',1000,{groups:{cards:'nonempty'},timeoutMs:40,stableMs:10,pollMs:5}),tick),/last geometry/);
   await assert.rejects(advance(stableGeometry(()=>new Promise(()=>{}),'',1000,{timeoutMs:40}),tick),/timed out/);
 });
-test('posting expected nonempty card and row counts remain mandatory',()=>{
-  assert.throws(()=>assertPostingLayout({width:1280,scroll:1280,cards:[],rows:[]},1280),/geometry count/);
-});
 for(const failure of ['empty','empty-bytes','empty-size','throw','hang'])test('capture failure '+failure+' never produces acceptance',async t=>{
   const tick=clock(t),f=model(t,{capture:failure});
   await assert.rejects(advance(f.lifecycle.capture('capture '+failure,{captureTimeoutMs:50}),tick));
@@ -153,7 +149,7 @@ test('main-thread late completion cannot outrun a phase deadline',async t=>{
   await assert.rejects(bounded(()=>{now=20;return true},{label:'late phase',timeoutMs:10}),/timed out/);
 });
 test('migrated semantic fixtures have no font-ready promises or unbounded acceptance capture',()=>{
-  for(const file of ['nurture-reels-r6','posting-r6','work-report-summary-r6','source-recheck','completed-card-delete']){
+  for(const file of ['nurture-reels-r6','work-report-summary-r6','source-recheck','completed-card-delete']){
     const source=fs.readFileSync(path.join(__dirname,file+'.integration.cjs'),'utf8');
     assert.doesNotMatch(source,/document\.fonts\.ready|requestAnimationFrame/);assert.match(source,/lifecycle\.capture/);assert.match(source,/lifecycle\.finish/);
   }

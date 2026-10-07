@@ -55,7 +55,7 @@ HTMLAnchorElement.prototype.click=function(){if(this.download){state.downloads.p
    const items=scoped(platform).filter(x=>x.decision==='approved'&&!x.dismissed_at&&x.visibility===body.visibility&&(body.scope==='all'||body.candidate_ids.includes(x.id)));
    return {platform,filename:`Juxin-${body.visibility}-accounts-20261001-120000.csv`,mime_type:'text/csv;charset=utf-8',csv:'\ufeffusername\r\n'+items.map(x=>x.username).join('\r\n'),row_count:items.length,skipped_count:0,visibility:body.visibility,scope:body.scope};
   }
-  if(path==='/api/reports/query')return {platform,start:body.start,end:body.end,rows:[],totals:{follow:0,greet:0,split:0,added:0,posting:0,collection:0,check:0,nurture:0,approved:0},total_collected:scoped(platform).length,today_collected:scoped(platform).length,global_dedupe:scoped(platform).length,approved:scoped(platform).filter(x=>x.decision==='approved').length};
+  if(path==='/api/reports/query')return {platform,start:body.start,end:body.end,rows:[],totals:{follow:0,greet:0,split:0,added:0,collection:0,check:0,nurture:0,approved:0},total_collected:scoped(platform).length,today_collected:scoped(platform).length,global_dedupe:scoped(platform).length,approved:scoped(platform).filter(x=>x.decision==='approved').length};
   throw Error('Fixture has no optional endpoint: '+path);
  }};
 createRoot(document.getElementById('root')!).render(<App/>);

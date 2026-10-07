@@ -1,4 +1,4 @@
-"""Benchmark preserves every historical metric and row beside new receipt count."""
+"""Benchmark preserves every nonposting metric and row after feature removal."""
 import copy
 import importlib.util
 import json
@@ -14,17 +14,17 @@ class WorkReportBenchmarkParityTests(unittest.TestCase):
     def fixtures(self):
         before={'totals':{'collection':12,'posting':3},'rows':[{'profile_id':'window','window_name':'Window',
             'username':'actor','instagram_user_id':'123','collection':12,'posting':3}]}
-        after=copy.deepcopy(before);after['totals']['confirmed_posting']=0;after['rows'][0]['confirmed_posting']=0
+        after=copy.deepcopy(before);after['totals'].pop('posting');after['rows'][0].pop('posting')
         return before,after
 
-    def test_historical_totals_and_rows_compare_without_new_zero_receipt_field(self):
+    def test_nonposting_totals_and_rows_compare_without_retired_fields(self):
         before,after=self.fixtures();benchmark.assert_legacy_report_parity(before,after)
         for part in ('totals','rows'):
             changed=copy.deepcopy(after)
-            (changed['totals'] if part=='totals' else changed['rows'][0])['posting']=4
+            (changed['totals'] if part=='totals' else changed['rows'][0])['collection']=13
             with self.subTest(part=part),self.assertRaises(AssertionError):benchmark.assert_legacy_report_parity(before,changed)
 
-    def test_new_receipt_count_must_be_zero_in_totals_and_each_fixture_row(self):
+    def test_retired_receipt_field_must_be_absent_from_totals_and_rows(self):
         before,after=self.fixtures()
         for part in ('totals','rows'):
             changed=copy.deepcopy(after)
@@ -37,7 +37,7 @@ class WorkReportBenchmarkParityTests(unittest.TestCase):
         legacy=os.environ.get('IGAC_TEST_REPORT_LEGACY_MODULE')
         if legacy:self.assertTrue(Path(legacy).is_file())
         result=benchmark.run(1000,Path(legacy) if legacy else None)
-        self.assertTrue(result['confirmed_posting_zero'])
+        self.assertTrue(result['posting_metrics_removed'])
         self.assertEqual(100,result['summary_first']['totals']['collection'])
         self.assertEqual(20,result['summary_first']['totals']['split'])
         self.assertEqual('ok',result['integrity'])

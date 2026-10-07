@@ -107,7 +107,7 @@ class WorkReportPerformanceR6Tests(unittest.TestCase):
                 self.service.finish_action_attempt(self.owner, campaign['id'], attempt, status=status, details={})
         bounds = ('2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z')
         summary = self.summary(*bounds); full = work_report(self.db, self.owner, *bounds)
-        self.assertEqual({'collection': 1, 'follow': 1, 'split': 2, 'added': 7, 'confirmed_posting': 0}, summary['totals'])
+        self.assertEqual({'collection': 1, 'follow': 1, 'split': 2, 'added': 7}, summary['totals'])
         self.assertEqual({k: full['totals'][k] for k in summary['totals']}, summary['totals'])
         self.assertEqual(1, full['totals']['greet']); self.assertEqual(3, full['totals']['check'])
 

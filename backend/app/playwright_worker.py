@@ -2165,7 +2165,7 @@ class PlaywrightWorker:
         self._cdp_session: Any = None
         self._cdp_relay: Any = None
         self.page: Any = None
-        # Only pages created by this worker (startup, posting or recovery) are
+        # Only pages created by this worker (startup, account homepage or recovery) are
         # owned by it. Existing BitBrowser tabs belong to the operator.
         self._worker_owned_page: Any = None
         self.profile_id: str | None = None
@@ -2520,12 +2520,12 @@ class PlaywrightWorker:
             )
         return task.result()
 
-    async def _label_task_page_best_effort(self, role: str, *, viewport_mode=None, cdp_session=None) -> None:
+    async def _label_task_page_best_effort(self, role: str, *, cdp_session=None) -> None:
         """Keep optional desktop tab labels outside the collection critical path."""
 
         try:
             await self._await_lifecycle_operation(
-                label_task_page(self, role, viewport_mode=viewport_mode, cdp_session=cdp_session),
+                label_task_page(self, role, cdp_session=cdp_session),
                 timeout=self.cdp_command_timeout_seconds,
             )
         except Exception:
@@ -2951,18 +2951,18 @@ class PlaywrightWorker:
             # Chromium builds that do not expose one of these optional CDP methods.
             return None
 
-    async def open_posting_page(self) -> Any:
+    async def open_account_home_page(self) -> Any:
         """Start on a fresh homepage tab in this account's existing context."""
         if self._context is None:
             raise WorkerExecutionError(
-                "账号窗口尚未连接，无法新建发帖标签页",
+                "账号窗口尚未连接，无法新建账号首页标签页",
                 reason="browser_disconnected",
             )
         context, source_page, epoch = self._context, self.page, self._screening_epoch
 
         def assert_owner() -> None:
             if epoch != self._screening_epoch or context is not self._context:
-                raise WorkerExecutionError('Posting owner disconnected', reason='worker_not_connected')
+                raise WorkerExecutionError('Account page owner disconnected', reason='worker_not_connected')
 
         async def reclaim_late(page: Any) -> None:
             if page is not source_page:
@@ -2983,15 +2983,13 @@ class PlaywrightWorker:
             )
             if candidate is source_page:
                 candidate = None
-                raise WorkerExecutionError('浏览器未创建独立发帖页面', reason='posting_page_not_isolated')
+                raise WorkerExecutionError('浏览器未创建独立账号首页', reason='account_page_not_isolated')
             assert_owner()
             candidate_session = await self._new_active_page_session(candidate)
-            # The composer must use the visible workspace dimensions, not the
-            # collector's 1280x900 surface clipped by a shorter native pane.
             # Label the newly owned target before navigation/layout; never the
             # operator's existing tab. Other task viewport policies stay intact.
             if candidate_session is not None:
-                await self._label_task_page_best_effort("task", viewport_mode="posting", cdp_session=candidate_session)
+                await self._label_task_page_best_effort("task", cdp_session=candidate_session)
             assert_owner()
             await self._await_lifecycle_operation(
                 candidate.goto(

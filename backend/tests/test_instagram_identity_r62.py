@@ -49,14 +49,14 @@ class IdentityResolverR62Tests(unittest.IsolatedAsyncioTestCase):
         self.names=['wrong_owner','real_owner']
         with self.assertRaises(ValidationError) as caught:
             await resolve_own_identity(self.page,self.checkpoint,expected={'username':'real_owner'},timeout=.1,poll=.001)
-        self.assertEqual('posting_account_mismatch',caught.exception.details['reason'])
+        self.assertEqual('account_identity_mismatch',caught.exception.details['reason'])
         self.assertEqual(1,self.checkpoint.await_count)
 
     async def test_missing_identity_is_not_zero_or_expected_identity(self):
         self.names=['']
         with self.assertRaises(ValidationError) as caught:
             await resolve_own_identity(self.page,self.checkpoint,expected={'username':'real_owner'},timeout=.02,poll=.001)
-        self.assertEqual('posting_identity_unverified',caught.exception.details['reason'])
+        self.assertEqual('account_identity_unverified',caught.exception.details['reason'])
 
     async def test_actor_swap_while_waiting_fails_before_return(self):
         async def checkpoint():self.uid='456'
@@ -91,7 +91,7 @@ class IdentityResolverR62Tests(unittest.IsolatedAsyncioTestCase):
         self.checkpoint.side_effect=checkpoint
         with self.assertRaises(ValidationError) as caught:
             await self.wait_for_partial_profile()
-        self.assertEqual('posting_account_mismatch',caught.exception.details['reason'])
+        self.assertEqual('account_identity_mismatch',caught.exception.details['reason'])
         self.assertEqual(13,self.checkpoint.await_count)
 
     async def test_actor_swap_during_final_partial_metrics_read_fails(self):
@@ -104,7 +104,7 @@ class IdentityResolverR62Tests(unittest.IsolatedAsyncioTestCase):
         self.page.evaluate.side_effect=swap_after_read
         with self.assertRaises(ValidationError) as caught:
             await self.wait_for_partial_profile()
-        self.assertEqual('posting_account_mismatch',caught.exception.details['reason'])
+        self.assertEqual('account_identity_mismatch',caught.exception.details['reason'])
         self.assertEqual(26,self.cookies.await_count)
 
     async def test_wrong_identity_on_partial_metrics_final_poll_fails(self):
@@ -114,7 +114,7 @@ class IdentityResolverR62Tests(unittest.IsolatedAsyncioTestCase):
         self.checkpoint.side_effect=checkpoint
         with self.assertRaises(ValidationError) as caught:
             await self.wait_for_partial_profile()
-        self.assertEqual('posting_account_mismatch',caught.exception.details['reason'])
+        self.assertEqual('account_identity_mismatch',caught.exception.details['reason'])
         self.assertEqual(13,self.checkpoint.await_count)
 
     async def test_lease_loss_on_partial_metrics_final_poll_fails(self):

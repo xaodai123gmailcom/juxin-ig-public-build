@@ -1,4 +1,4 @@
-"""Read-only account identity proof shared by posting and standalone nurture."""
+"""Read-only account identity proof shared by account inspection and standalone nurture."""
 import asyncio
 from .errors import ValidationError
 
@@ -77,18 +77,18 @@ OWN_METRICS = 'username => {' + _HELPERS + r'''
 
 
 def _unverified():
-    return ValidationError('无法核验当前登录账号或自己的主页，已停止当前操作',details={'reason':'posting_identity_unverified'})
+    return ValidationError('无法核验当前登录账号或自己的主页，已停止当前操作',details={'reason':'account_identity_unverified'})
 
 
 def _mismatch():
-    return ValidationError('当前登录账号与任务目标不一致，已停止当前操作',details={'reason':'posting_account_mismatch'})
+    return ValidationError('当前登录账号与任务目标不一致，已停止当前操作',details={'reason':'account_identity_mismatch'})
 
 
 async def signed_in_id(page):
     cookies=await page.context.cookies('https://www.instagram.com/')
     ids={str(c.get('value','')) for c in cookies if c.get('name')=='ds_user_id'}
     if len(ids)!=1 or not next(iter(ids),'').isdigit():
-        raise ValidationError('无法核验当前登录账号，请在窗口内确认登录状态',details={'reason':'posting_identity_unverified'})
+        raise ValidationError('无法核验当前登录账号，请在窗口内确认登录状态',details={'reason':'account_identity_unverified'})
     return next(iter(ids))
 
 

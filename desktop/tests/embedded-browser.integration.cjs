@@ -24,8 +24,6 @@ if(process.env.JUXIN_EMBEDDED_FAILURE){
   const output=path.dirname(process.env.JUXIN_EMBEDDED_FAILURE);
   fs.rmSync(path.join(output,'embedded-account-surface.json'),{force:true});
   fs.rmSync(path.join(output,'embedded-account-surface.png'),{force:true});
-  fs.rmSync(path.join(output,'embedded-posting-failure.json'),{force:true});
-  fs.rmSync(path.join(output,'embedded-posting-failure.png'),{force:true});
   fs.rmSync(path.join(output,'embedded-shell-failure.json'),{force:true});
   fs.rmSync(path.join(output,'embedded-shell-failure.png'),{force:true});
 }
@@ -289,11 +287,6 @@ app.whenReady().then(async()=>{
   if(process.env.JUXIN_PYTHON) {
     watchdog.begin('python-cold-task-startup',540000);
     taskColdStart=await require('./task-cold-start-r62.cjs').run({host,python,runPythonProbe});
-    watchdog.begin('python-posting-adapter',540000);
-    host.hide();
-    const posting=await host.ensure('native:cccccccc-cccc-4ccc-8ccc-cccccccccccc',owner,'',true);
-    await runPythonProbe(python,'embedded_posting_probe.py',{IGAC_POSTING_TEST_CDP:host.endpoint(posting)});
-    await host.closeProfile(posting);
   }
   watchdog.begin('review-preview-ui',270000);
   win.webContents.on('console-message',(_event,level,message)=>{
@@ -437,7 +430,7 @@ app.whenReady().then(async()=>{
   await choose('下一页');await waitShell("fixture.commands.at(-1).action==='forward' && !!document.querySelector('[role=status]')");
   // All account surface calls now pass through the production main presenter
   // and a real WebContentsView, rather than a mocked attached=true response.
-  for(const route of ['collection','review','posting']) {
+  for(const route of ['collection','review','nurture']) {
     await shellEval(`document.querySelector('a[href="#/${route}"]').click()`);
     await waitShell("Boolean(document.querySelector('#other-page'))");
     assert.equal(pane.getVisible(),false,route);
@@ -670,8 +663,8 @@ app.whenReady().then(async()=>{
   assert.equal(await shellEval("document.querySelectorAll('.home-guide-card').length"),4);
   assert.equal(await shellEval("document.querySelectorAll('.home-metrics,.home-status').length"),0);
   assert.equal(pane.getVisible(),false);
-  assert.deepEqual(await shellEval("[...document.querySelectorAll('[aria-label=主导航] a>span:first-of-type')].map(x=>x.textContent)"),['首页','账号','检查','养号','发帖','采集','审核','公开','私密','报表','历史']);
-  console.log('PASS current home brand, four existing operation guides, merged reports and dedicated posting navigation');
+  assert.deepEqual(await shellEval("[...document.querySelectorAll('[aria-label=主导航] a>span:first-of-type')].map(x=>x.textContent)"),['首页','账号','检查','养号','采集','审核','公开','私密','报表','历史']);
+  console.log('PASS current home brand, four existing operation guides, merged reports and nurture navigation');
   await new Promise(r=>setTimeout(r,150));
   if(process.env.JUXIN_HOME_SCREENSHOT)fs.writeFileSync(process.env.JUXIN_HOME_SCREENSHOT,(await win.webContents.capturePage()).toPNG());
   watchdog.begin('task-watch',270000);await require('./task-watch.integration.cjs')({host,owner,base});
@@ -688,7 +681,6 @@ app.whenReady().then(async()=>{
   watchdog.begin('source-recheck',90000);await require('./source-recheck.integration.cjs')({win,host});
   watchdog.begin('work-report-summary-r6',120000);await require('./work-report-summary-r6.integration.cjs')({win,host});
   watchdog.begin('nurture-reels-r6',120000);await require('./nurture-reels-r6.integration.cjs')({win,host});
-  watchdog.begin('posting-r6',120000);await require('./posting-r6.integration.cjs')({win,host});
   watchdog.begin('completed-card-delete',90000);await require('./completed-card-delete.integration.cjs')({win,host});
   watchdog.begin('workbench-platform',90000);await require('./workbench-platform.integration.cjs')({win,host});
   watchdog.begin('final-cleanup',180000);

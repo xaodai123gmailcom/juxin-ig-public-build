@@ -68,7 +68,7 @@ class StandaloneBrowserR6Tests(unittest.IsolatedAsyncioTestCase):
         async def lease():
             self.leases+=1
             yield
-        self.worker=SimpleNamespace(page=self.page,_guard=AsyncMock(),open_posting_page=AsyncMock(),_destructive_action_lease=lease)
+        self.worker=SimpleNamespace(page=self.page,_guard=AsyncMock(),open_account_home_page=AsyncMock(),_destructive_action_lease=lease)
         self.b=StudioBrowser(self.worker,AsyncMock(),AsyncMock());self.b.nurture_mode=True
         self.b.account_snapshot=AsyncMock();self.b.nurture_ready=AsyncMock();self.b.nurture_decisions={};self.b.nurture_actions={}
         self.b.nurture_observation=AsyncMock();self.b.nurture_decision=AsyncMock()

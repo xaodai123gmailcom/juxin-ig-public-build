@@ -211,7 +211,6 @@ class NurtureSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_auto_concurrency_is_resolved_at_creation_but_template_keeps_auto(self):
         self.assertEqual(0,config_for('nurture',{})['concurrency'])
-        self.assertEqual(1,config_for('posting',{})['concurrency'])
         await self.m.command(self.owner,{'action':'save_template','kind':'nurture','config':{}})
         ids=await self.create(['w1','w2','w2'])
         self.assertEqual(2,len(ids))

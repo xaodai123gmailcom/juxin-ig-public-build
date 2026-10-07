@@ -133,22 +133,15 @@ class NativeCloudTests(unittest.TestCase):
             with self.db.write() as c:c.execute('INSERT INTO studio_assets VALUES(?,?,?,?,?,?,?,?,?,?)',('asset',self.owner,'manual','x',str(outside),'photo','','','',isoformat()))
             self.assertEqual({},decode_workspace(self.payload())['assets'])
         finally:outside.unlink()
-    def test_collection_graph_and_media_restore_with_valid_relationships(self):
-        from PIL import Image
-        from app.studio_media import StudioMedia
+    def test_collection_graph_restores_with_valid_relationships(self):
         task=self.s.create_task(self.owner,name='收集',modes=['following'],targets=['source_account'],settings={})
         self.s.record_result(self.owner,task['id'],task['targets'][0]['id'],username='person',instagram_user_id='123456',source_mode='following',visibility='public',profile={'followers_count':25},screening={},qualified=True)
-        image=io.BytesIO();Image.new('RGB',(20,20),'blue').save(image,format='PNG')
-        media=StudioMedia(self.db);media.files.root=Path(self.tmp.name)/'Desktop'/'聚鑫国际素材'
-        asset=media.store(self.owner,image.getvalue(),'example','manual')
         dest,service,owner=self.new_destination();import_workspace(dest,owner,self.root/'destination',self.payload())
         with dest.read() as c:
             self.assertEqual(1,c.execute('SELECT count(*) FROM task_results').fetchone()[0])
             self.assertEqual({'source_account','person'},{r[0] for r in c.execute('SELECT current_username_norm FROM instagram_accounts JOIN global_seen ON global_seen.account_id=instagram_accounts.id')})
             self.assertEqual(2,c.execute('SELECT total_count FROM global_seen_stats').fetchone()[0]);self.assertEqual([],c.execute('PRAGMA foreign_key_check').fetchall())
-            path=Path(c.execute('SELECT path FROM studio_assets WHERE id=?',(asset,)).fetchone()[0]);self.assertTrue(path.is_file());self.assertTrue(path.is_relative_to(self.root/'destination'))
-        with self.db.read() as c:original=Path(c.execute('SELECT path FROM studio_assets WHERE id=?',(asset,)).fetchone()[0])
-        self.assertEqual(original.read_bytes(),path.read_bytes())
+            self.assertEqual(0,c.execute('SELECT count(*) FROM studio_assets').fetchone()[0])
     def test_lost_upload_ack_is_reconciled_without_new_upload(self):
         self.plan();api=MemoryCloud();cloud=CloudWorkspace(self.s,self.root,api);cloud.command(self.owner,{'action':'login','email':'owner@example.test','password':'local-test-password'});cloud.sync(self.owner)
         with self.db.write() as c:c.execute("UPDATE cloud_workspace_links SET revision=0,digest='' WHERE owner_user_id=?",(self.owner,))

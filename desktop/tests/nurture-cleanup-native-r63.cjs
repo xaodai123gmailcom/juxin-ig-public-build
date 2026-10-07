@@ -436,7 +436,7 @@ async function run({host,win,session,outputDirectory,proof}) {
     await require('./visible-fixture.cjs').prepareVisibleFixture(win,{label:'R6.3 reopened native page',timeoutMs:15000});
     reopenPhase='native-page-capture';
     proof.screenshot_capture={};
-    const image=await require('./posting-viewport-native-r62.cjs').capturePaintedPage({
+    const image=await require('./native-page-capture.cjs').capturePaintedPage({
       win,pane,page,bounds,evidence:proof.screenshot_capture,
       showSurface:async() => {
         const shown=await success('show',{profile:reopened.id,target:page.targetId,bounds,grant:host.requestSurface(),read_only:false});

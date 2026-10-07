@@ -122,14 +122,9 @@ class AccountSurface:
                 if not current or current['profile_id']!=profile or current['revision']!=row['revision']:
                     raise ConflictError('窗口方案已变化，请刷新后再操作')
                 lease=c.execute('SELECT * FROM browser_operation_leases WHERE profile_id=? ',(profile,)).fetchone()
-                if lease is None and c.execute("SELECT 1 FROM studio_jobs WHERE profile_id=? AND kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1 LIMIT 1",(profile,)).fetchone():
-                    raise ConflictError('养号窗口清理仍待核验，请前往养号异常任务核验清理')
-                # A lost transient row does not retire a durable ambiguous
-                # posting/cleanup hold. With no matching live row even a
-                # read-only grant cannot identify a safe task page to expose.
-                if (lease is None and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone()
-                        and c.execute("SELECT 1 FROM posting_jobs WHERE profile_id=? AND lease_token<>'' LIMIT 1",(profile,)).fetchone()):
-                    raise ConflictError('发帖窗口仍待核验，暂不能显示；请先恢复或核对占用记录')
+                if lease is None:
+                    from .browser_admission import assert_no_durable_window_hold
+                    assert_no_durable_window_hold(c,owner,profile)
                 if lease and body.get('read_only') is not True:
                     # Task acquisition already hides interactive input before
                     # committing its lease, under this same database fence.

@@ -171,8 +171,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.headers.get('X-Startup-Token') != os.environ['IGAC_STARTUP_TOKEN'] and mode != 'no-auth':
             return self.reply(401, {})
+        if self.path != '/api/health':
+            return self.reply(200 if mode == 'posting-survives' else 401 if mode == 'posting-unauthorized' else 404, {})
         self.reply(200, dict(status='ready', source_revision='old' if mode=='old' else 'stability-r94', database='ok'))
     def do_POST(self):
+        if self.path != '/api/internal/shutdown':
+            return self.reply(200 if mode == 'posting-survives' else 401 if mode == 'posting-unauthorized' else 404, {})
         self.reply(200, dict(accepted=True))
         if mode != 'stuck-shutdown': threading.Thread(target=self.server.shutdown).start()
 server = HTTPServer(('127.0.0.1', int(os.environ['IGAC_PORT'])), Handler)
@@ -240,6 +244,11 @@ class FrozenCoreProbeTests(unittest.TestCase):
             result = self.run_probe('ok')
         self.assertTrue(result['orderly_shutdown'])
         self.assertEqual(b'user data must stay untouched', (original / 'collector.sqlite3').read_bytes())
+
+    def test_removed_endpoint_survival_or_authentication_only_refusal_fails(self):
+        for mode in ('posting-survives', 'posting-unauthorized'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(RuntimeError, 'Removed posting endpoint'):
+                self.run_probe(mode)
 
     def test_premature_exit_is_not_a_successful_model_only_probe(self):
         with self.assertRaisesRegex(RuntimeError, 'exit 23'):
@@ -476,7 +485,7 @@ class ReleaseWiringTests(unittest.TestCase):
         sources = read_sources(ROOT)
         assert_public_build_chain(sources['workflow'], sources['wrapper'], sources['common'])
         assert_ui_dependencies(sources['wrapper'], sources['build'], sources['install'])
-        self.assertIn("from 'esbuild'", (ROOT / 'renderer/tests/build-cleanup-fixture.mjs').read_text())
+        self.assertIn("from 'esbuild'", (ROOT / 'renderer/tests/build-nurture-r41-fixture.mjs').read_text())
 
     def test_public_and_local_freezes_keep_runtime_imports(self):
         sources = read_sources(ROOT)

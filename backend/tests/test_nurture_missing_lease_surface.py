@@ -17,7 +17,7 @@ class NurtureMissingLeaseSurfaceTests(unittest.TestCase):
 
     def test_missing_row_denies_both_interactive_and_readonly_surfaces(self):
         for body in (self.body,{**self.body,'read_only':True,'view_target':'old-target'}):
-            with self.assertRaisesRegex(ConflictError,'养号窗口清理仍待核验'):
+            with self.assertRaisesRegex(ConflictError,'养号窗口清理仍待'):
                 self.surface.update(self.owner,self.row,body)
         self.assertEqual([],self.adapter.shows)
 

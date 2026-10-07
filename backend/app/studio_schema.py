@@ -1,4 +1,4 @@
-"""Durable, owner-isolated publishing and nurture state."""
+"""Durable nurture state; legacy table definitions remain for recoverable upgrades."""
 
 def initialize_studio_schema(c):
     statements = [
@@ -27,8 +27,8 @@ def initialize_studio_schema(c):
         'CREATE INDEX IF NOT EXISTS studio_jobs_owner ON studio_jobs(owner_user_id,created_at)',
         'CREATE INDEX IF NOT EXISTS studio_assets_owner ON studio_assets(owner_user_id,created_at)',
     ]
-    from .posting_account_stats import initialize_posting_stats
-    initialize_posting_stats(c)
+    from .account_profile_stats import initialize_account_stats
+    initialize_account_stats(c)
     for statement in statements:
         c.execute(statement)
     c.execute("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(20,datetime('now'))")

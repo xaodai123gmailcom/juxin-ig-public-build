@@ -32,6 +32,7 @@ from .errors import (
     ValidationError,
 )
 from .browser_admission import assert_no_durable_window_hold
+from .posting_retirement import legacy_studio_lease_entities, legacy_window_holds
 from .person_recognition import (
     PERSON_RECOGNIZER_VERSION,
     normalize_person_category_fields,
@@ -261,16 +262,12 @@ def _reconcile_browser_leases(
           ON lease.operation_type='action' AND campaign.id=lease.entity_id
         """
     ).fetchall()
-    # Posting submissions and cleanup are durable fences, not expiring workers.
-    # Query only entities referenced by current leases, never all posting history.
-    posting_ids = list(dict.fromkeys(row["entity_id"] for row in rows if row["operation_type"] == "posting"))
-    posting_jobs = {}
-    if posting_ids and connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone():
-        for offset in range(0, len(posting_ids), 400):
-            batch = posting_ids[offset:offset + 400]
-            marks = ','.join('?' for _ in batch)
-            posting_jobs.update({item['id']: item for item in connection.execute(
-                f"SELECT id,owner_user_id,profile_id,lease_token,status FROM posting_jobs WHERE id IN ({marks})", batch)})
+    # Retired work has no executor authorized to release its old generation.
+    # Keep exact legacy studio entity locks even when row ownership mismatches.
+    retired_studio_ids = legacy_studio_lease_entities(connection)
+    known_nurture_owners = {(row['id'], row['owner_user_id'], row['profile_id'])
+                           for row in connection.execute("SELECT job.id,job.owner_user_id,job.profile_id FROM browser_operation_leases lease "
+                               "JOIN studio_jobs job ON lease.operation_type='studio' AND job.id=lease.entity_id WHERE job.kind='nurture'")}
     cutoff = now - timedelta(seconds=max(0, inactive_grace_seconds))
     pending_nurture_profiles = {item[0] for item in connection.execute(
         "SELECT profile_id FROM studio_jobs WHERE kind='nurture' AND status='completed' "
@@ -351,18 +348,13 @@ def _reconcile_browser_leases(
             # Short, explicit management operation; preserve until release or TTL.
             stale = expired
         elif operation_type == "posting":
-            job = posting_jobs.get(entity_id)
-            # Missing/mismatched durable evidence cannot prove that an ambiguous
-            # submit or browser close finished. Keep it fenced for explicit repair.
-            if (job is None or job['owner_user_id'] != row['owner_user_id']
-                    or job['profile_id'] != row['profile_id'] or job['lease_token']):
-                stale = False
-            else:
-                # The manager clears its token only after owned cleanup. Allow
-                # expiry only for terminal token-free remnants, never pending work.
-                stale = expired and job['status'] in {'completed', 'cancelled', 'failed'}
+            # Expiry and token-free terminal rows cannot prove browser cleanup.
+            stale = False
         elif operation_type == "studio":
-            stale = stale or (active_studio_entity_ids is not None and entity_id not in active_studio_entity_ids and heartbeat_is_old)
+            stale = False if (entity_id in retired_studio_ids or
+                              (entity_id, row['owner_user_id'], row['profile_id']) not in known_nurture_owners) else (
+                stale or (active_studio_entity_ids is not None
+                          and entity_id not in active_studio_entity_ids and heartbeat_is_old))
         elif operation_type == "monitor":
             manager_known_inactive = (
                 active_monitor_entity_ids is not None
@@ -6641,6 +6633,10 @@ class CoreService:
             # Posting submission/cleanup may have an unknown external outcome.
             # Its durable manager, not generic startup, owns releasing that fence.
             connection.execute("""DELETE FROM browser_operation_leases WHERE operation_type!='posting'
+                AND NOT (operation_type='studio' AND NOT EXISTS (
+                    SELECT 1 FROM studio_jobs own_job WHERE own_job.id=browser_operation_leases.entity_id
+                    AND own_job.owner_user_id=browser_operation_leases.owner_user_id
+                    AND own_job.profile_id=browser_operation_leases.profile_id AND own_job.kind='nurture'))
                 AND NOT EXISTS (SELECT 1 FROM studio_jobs job
                     WHERE job.profile_id=browser_operation_leases.profile_id AND job.kind='nurture'
                     AND job.status='completed' AND json_extract(job.result_json,'$.window_hold')=1)""")
@@ -7135,7 +7131,7 @@ class CoreService:
         entity_id: str,
         ttl_seconds: int = 90,
     ) -> str:
-        if operation_type not in {"collection", "action", "monitor", "studio", "posting", "account"}:
+        if operation_type not in {"collection", "action", "monitor", "studio", "account"}:
             raise ValidationError("Invalid browser lease operation")
         if not 15 <= ttl_seconds <= 600:
             raise ValidationError("Browser lease TTL must be between 15 and 600 seconds")
@@ -7151,12 +7147,6 @@ class CoreService:
             # A missing lease never authorizes adopting an unresolved durable
             # hold. Posting preflight uses this exact read-only fence as well.
             assert_no_durable_window_hold(connection, owner_user_id, profile_id)
-            if operation_type == 'posting':
-                if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone():
-                    raise ConflictError('发帖记录不可用，不能接管窗口')
-                job = connection.execute('SELECT owner_user_id,profile_id FROM posting_jobs WHERE id=?', (entity_id,)).fetchone()
-                if job is None or job['owner_user_id'] != owner_user_id or job['profile_id'] != profile_id:
-                    raise ConflictError('发帖任务与所选窗口归属不匹配')
             if operation_type != 'account':
                 from .account_platforms import platform_for_profile
                 browser_platform = platform_for_profile(connection, profile_id, owner_user_id=owner_user_id)
@@ -7194,15 +7184,17 @@ class CoreService:
                 )
             except sqlite3.IntegrityError as exc:
                 holder = connection.execute(
-                    "SELECT operation_type, entity_id FROM browser_operation_leases WHERE profile_id=?",
+                    "SELECT operation_type, entity_id, owner_user_id FROM browser_operation_leases WHERE profile_id=?",
                     (profile_id,),
                 ).fetchone()
+                retired_holder = holder and (holder['operation_type'] == 'posting' or (
+                    holder['operation_type'] == 'studio' and holder['entity_id'] in legacy_studio_lease_entities(connection)))
                 raise ConflictError(
                     "BitBrowser window is already in use",
                     details={
                         "profile_id": profile_id,
-                        "operation_type": holder["operation_type"] if holder else "unknown",
-                        "entity_id": holder["entity_id"] if holder else None,
+                        "operation_type": 'account' if retired_holder else holder["operation_type"] if holder else "unknown",
+                        "entity_id": holder["entity_id"] if holder and not retired_holder and holder['owner_user_id'] == owner_user_id else None,
                     },
                 ) from exc
             self.database.live_browser_lease_tokens.add(lease_token)
@@ -7365,10 +7357,16 @@ class CoreService:
                 "WHERE kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1 "
                 "ORDER BY created_at,id"
             ).fetchall()
+            retired_studio_ids = legacy_studio_lease_entities(connection)
+            retired_holds = legacy_window_holds(connection)
         result: list[dict[str, Any]] = []
         for row in rows:
             owned = row["owner_user_id"] == requesting_user_id
-            if row["operation_type"] == "collection":
+            retired = row['operation_type'] == 'posting' or (
+                row['operation_type'] == 'studio' and row['entity_id'] in retired_studio_ids)
+            if retired:
+                state = 'occupied'
+            elif row["operation_type"] == "collection":
                 state = (
                     "paused"
                     if row["task_status"] == "paused"
@@ -7378,20 +7376,19 @@ class CoreService:
                     if row["has_running_target"]
                     else "waiting"
                 )
-            elif row["operation_type"] == "posting":
-                state = "posting"
             else:
                 state = "paused" if row["campaign_status"] == "paused" else "action"
             result.append(
                 {
                     "profile_id": row["profile_id"],
-                    "operation_type": row["operation_type"],
+                    "operation_type": 'account' if retired else row["operation_type"],
                     "state": state,
                     "owned_by_current_login": owned,
-                    "entity_id": row["entity_id"] if owned else None,
+                    "entity_id": row["entity_id"] if owned and not retired else None,
                     "acquired_at": row["acquired_at"],
                     "heartbeat_at": row["heartbeat_at"],
                     "expires_at": row["expires_at"],
+                    **({'can_reconcile_window_state': True} if retired and owned else {}),
                 }
             )
         # These are display-only reservations, never replacement lease records.
@@ -7406,6 +7403,15 @@ class CoreService:
                 'state':'cleanup_pending','owned_by_current_login':owned,
                 'entity_id':row['id'] if owned else None,'acquired_at':row['created_at'],
                 'heartbeat_at':None,'expires_at':None})
+            visible_profiles.add(row['profile_id'])
+        for row in retired_holds:
+            if row['profile_id'] in visible_profiles:
+                continue
+            result.append({'profile_id': row['profile_id'], 'operation_type': 'account',
+                'state': 'occupied', 'owned_by_current_login': row['owner_user_id'] == requesting_user_id,
+                'entity_id': None, 'acquired_at': row['created_at'],
+                'heartbeat_at': None, 'expires_at': None,
+                **({'can_reconcile_window_state': True} if row['owner_user_id'] == requesting_user_id else {})})
             visible_profiles.add(row['profile_id'])
         return result
 

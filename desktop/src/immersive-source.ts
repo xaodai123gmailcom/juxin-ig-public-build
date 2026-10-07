@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { IMMERSIVE_VERSION, verifyImmersiveSource } from './immersive-policy.js';
 
-export const IMMERSIVE_UNAVAILABLE = '可选翻译组件未安装。请自行从官方渠道取得受支持的版本，按说明放入本机配置目录；采集、发帖和养号功能可继续使用。';
+export const IMMERSIVE_UNAVAILABLE = '可选翻译组件未安装。请自行从官方渠道取得受支持的版本，按说明放入本机配置目录；采集和养号功能可继续使用。';
 export type ImmersiveAvailability = { available: boolean; version: string; message: string };
 export interface ImmersiveSource {
   status(): ImmersiveAvailability;

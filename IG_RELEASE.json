@@ -14,14 +14,15 @@
   "report_upgrade": "Additive uniquely named report index preserves legacy index and all records",
   "parent_reels_policy": "8–20 seconds active playback; 50% like; confirmed identity advancement",
   "task_startup": "task-owned unopened-window launch, verified current identity before activity",
-  "posting_retry": "explicit preparation retry to review; never auto-resend unknown or confirmed submissions",
-  "posting_crop_transition": "One verified Continue action per ready crop/edit stage; explicit original-ratio acknowledgement; no retry after unknown submission",
-  "posting_viewport": "Posting-only viewport freezes measured pane dimensions; collection and nurture retain original sizing",
   "manual_recheck": "One durable request joins the live source producer/Reels at a safe point, runs once, resumes Reels while children continue; pending and interrupted requests survive explicit restart",
   "standalone_nurture_completion": "Canonical singular/plural Reels routes, verified progressing playback only, stable advancement and durable confirmed-close lease fence",
   "final_source_completion": "Recover authoritative factory disconnects, retire released late child pages, preserve exact leases until final confirmed close; never infer completion from an empty seed queue alone",
   "historical_nurture_cleanup": "Reconcile orphan completed holds only after authoritative desktop closed proof, no successor lease or unfinished workflow, preserve all historical accounting and active locks",
-  "queued_posting_recovery": "Atomic withdrawal only before worker/window claim or submission; preserves material/history, unbinds assignment and fences stale reviewed requests",
   "hidden_collection_recovery": "Owner-scoped exact task locator; only inactive paused tasks without leases or unfinished targets can stop; separate authoritative closed-profile cleanup remains required",
-  "posting_crop_compatibility": "Label/title/labelledby and conservative single actionable opposing-corner icon discovery; fresh identity/window guard before ratio and Original input"
+  "feature_scope": [
+    "collection",
+    "nurture",
+    "account-management"
+  ],
+  "retired_feature_storage": "Verified recoverable archive before safe legacy-row retirement; uncertain active owners remain fenced"
 }

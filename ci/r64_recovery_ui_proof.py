@@ -1,14 +1,14 @@
 """Release-stage oracle for native production-renderer recovery evidence."""
 import hashlib,re
 from pathlib import Path
-SCENARIOS=('queuedGuards','withdrawPreservesMaterial','withdrawClearsAssignment','repeatedWithdrawCollapsed','staleReviewCannotStart','cleanupRefusesPausedBlocker','hiddenBlockerExactIdentity','repeatedLookupCollapsed','cancelStopNoMutation','liveBlockerStopDisabled','staleStopRejected','stopPreservesHoldAndHistory','stopFeedbackVisible','separateCleanupIntent','cleanedWindowRebind','reviewCancelNoStart','singleReviewedStartIntent')
-SOURCE_REQUIRED=('renderer/src/App.tsx','renderer/src/posting-workspace.tsx','renderer/src/nurture-collection-blocker.tsx','renderer/src/standalone-nurture-workspace.tsx','renderer/src/core-client.ts','renderer/tests/fixtures/recovery-ui-r64.tsx','desktop/tests/recovery-ui-native-r64.cjs','desktop/tests/renderer-fixture.cjs','desktop/tests/visible-fixture.cjs')
-CAPTURES=('r64-recovery-ui-withdrawn-review.png','r64-recovery-ui-hidden-blocker.png','r64-recovery-ui-stopped-feedback.png','r64-recovery-ui-fresh-review.png')
+SCENARIOS=('nonpostingRoutesOnly', 'cleanupRefusesPausedBlocker', 'hiddenBlockerExactIdentity', 'repeatedLookupCollapsed', 'cancelStopNoMutation', 'liveBlockerStopDisabled', 'staleStopRejected', 'stopPreservesHoldAndHistory', 'stopFeedbackVisible', 'separateCleanupIntent', 'cleanedWindowAvailable')
+SOURCE_REQUIRED=('renderer/src/App.tsx','renderer/src/formal-workbench.tsx','renderer/src/nurture-collection-blocker.tsx','renderer/src/standalone-nurture-workspace.tsx','renderer/src/core-client.ts','renderer/tests/fixtures/recovery-ui-r64.tsx','desktop/tests/recovery-ui-native-r64.cjs','desktop/tests/renderer-fixture.cjs','desktop/tests/visible-fixture.cjs')
+CAPTURES=('r64-recovery-ui-hidden-blocker.png', 'r64-recovery-ui-stopped-feedback.png', 'r64-recovery-ui-cleaned-window.png')
 def require(ok,message):
     if not ok:raise RuntimeError(message)
 def validate_recovery_ui(proof,source,commit,artifacts):
     source,artifacts=Path(source),Path(artifacts)
-    require(isinstance(proof,dict) and type(proof.get('schema')) is int and proof['schema']==1 and proof.get('gate')=='r64-recovery-ui-native','Native recovery schema is invalid')
+    require(isinstance(proof,dict) and type(proof.get('schema')) is int and proof['schema']==2 and proof.get('gate')=='r64-recovery-ui-native','Native recovery schema is invalid')
     require(all(proof.get(k) is True for k in ('verified','synthetic_offline','native_runtime','required_mode','cleanup_verified')),'Required native recovery proof incomplete')
     require(proof.get('platform')=='win32' and proof.get('windows_release_status')=='passed' and proof.get('source_commit')==commit and proof.get('github_sha')==commit,'Native recovery Windows/source identity mismatch')
     require(proof.get('electron') and proof.get('chromium'),'Native recovery runtime missing')
@@ -26,12 +26,8 @@ def validate_recovery_ui(proof,source,commit,artifacts):
         p=Path(name)
         require(not p.is_absolute() and '..' not in p.parts and (source/p).is_file(),'Native recovery unsafe source path')
         require(digest==hashlib.sha256((source/p).read_bytes()).hexdigest(),'Native recovery source hash mismatch: '+name)
-    starts=proof.get('start_intents',[]);stops=proof.get('stop_intents',[])
-    require(len(starts)==1 and len(stops)==2 and type(proof.get('successful_stops')) is int and proof['successful_stops']==1 and type(proof.get('cleanup_successes')) is int and proof['cleanup_successes']==1,'Native recovery repeated mutation mismatch')
-    start=starts[0].get('body',{})
-    require(start.get('action')=='start' and start.get('job_ids')==['queued-r64'] and len(start.get('reviewed',[]))==1,'Native recovery selected wrong start target')
-    reviewed=start['reviewed'][0]
-    require(reviewed.get('id')=='queued-r64' and reviewed.get('asset_id')=='asset-r64' and reviewed.get('profile_id')=='w1' and reviewed.get('expected_username')=='fixture.one' and type(reviewed.get('queue_revision')) is int and reviewed['queue_revision']==12,'Native recovery stale review was accepted')
+    starts=proof.get('start_intents');stops=proof.get('stop_intents',[])
+    require(starts==[] and len(stops)==2 and type(proof.get('successful_stops')) is int and proof['successful_stops']==1 and type(proof.get('cleanup_successes')) is int and proof['cleanup_successes']==1,'Native recovery repeated mutation mismatch')
     expected_stop={'action':'stop_cleanup_collection','job_id':'held-r64','task_id':'86feb8fc-f2a6-404f-9459-11dd3f884103','version':7}
     require(all(s.get('body')==expected_stop and type(s['body'].get('version')) is int for s in stops),'Native recovery selected wrong stop target/version')
     shots=proof.get('screenshots',[])

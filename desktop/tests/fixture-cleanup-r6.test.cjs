@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const test=require('node:test');
-for(const name of ['work-report-summary-r6','nurture-reels-r6','posting-r6','core-route-stability','source-recheck']){
+for(const name of ['work-report-summary-r6','nurture-reels-r6','core-route-stability','source-recheck']){
  const {closeFixtureServer}=require('./'+name+'.integration.cjs');
  test(name+' closes active and idle fixture connections',async()=>{
   let idle=0,active=0;await closeFixtureServer({close(cb){setImmediate(cb)},closeIdleConnections(){idle++},closeAllConnections(){active++}});
@@ -18,7 +18,7 @@ test('native fixtures import the exact production global stylesheet order',()=>{
  const css=source=>[...source.matchAll(/import ["']([^"']+\.css)["'];/g)].map(m=>path.basename(m[1]));
  const expected=css(fs.readFileSync(path.join(root,'renderer/src/main.tsx'),'utf8'));
  assert.equal(expected.length,4);
- for(const file of ['desktop/tests/work-report-summary-r6.integration.cjs','renderer/tests/fixtures/posting-r6.tsx','renderer/tests/fixtures/standalone-nurture-r6.tsx','renderer/tests/fixtures/core-route-stability.tsx','renderer/tests/fixtures/source-recheck.tsx'])assert.deepEqual(css(fs.readFileSync(path.join(root,file),'utf8')),expected,file);
+ for(const file of ['desktop/tests/work-report-summary-r6.integration.cjs','renderer/tests/fixtures/standalone-nurture-r6.tsx','renderer/tests/fixtures/core-route-stability.tsx','renderer/tests/fixtures/source-recheck.tsx'])assert.deepEqual(css(fs.readFileSync(path.join(root,file),'utf8')),expected,file);
 });
 
 const {stableReportLayout,assertCardAlignment}=require('./work-report-summary-r6.integration.cjs');
@@ -30,7 +30,7 @@ test('report wrong viewport cannot count as settled',async()=>{
  await assert.rejects(stableReportLayout(async()=>({viewportWidth:1598}),1000,{timeoutMs:20,stableMs:1,pollMs:1}),/did not stabilize/);
 });
 test('stable report overflow is not hidden by resize settling',async()=>{
- const bad={viewportWidth:1000,summary:{clientWidth:100,scrollWidth:200},cards:Array(5).fill({})};
+ const bad={viewportWidth:1000,summary:{clientWidth:100,scrollWidth:200},cards:Array(4).fill({})};
  assert.equal(await stableReportLayout(async()=>bad,1000,{timeoutMs:100,stableMs:1,pollMs:1}),bad);
  assert.throws(()=>assertCardAlignment(bad),/summary has no horizontal overflow/);
 });
@@ -91,43 +91,7 @@ test('WhatsApp grid wait retains renderer failure and the bounded hung-read dead
  await assert.rejects(waitWhatsAppGridLayout({executeJavaScript:()=>new Promise(()=>{})},900,.3,{timeoutMs:30}),/timed out: WhatsApp grid layout/);
 });
 
-const {stablePostingLayout,assertPostingLayout}=require('./posting-r6.integration.cjs');
-function postingFrame(width=1280,rowHeights=[124,124,124]){
- const item=(height,id)=>({id,width:width-150,height,right:width-20});
- return {width,scroll:width,cards:Array.from({length:4},()=>item(78,null)),rows:rowHeights.map((h,i)=>item(h,['first','second','unknown'][i]))};
-}
-test('posting layout retains equal card and task-row height requirements with named diagnostics',()=>{
- assert.doesNotThrow(()=>assertPostingLayout(postingFrame(),1280));
- assert.throws(()=>assertPostingLayout(postingFrame(1280,[93,93,124]),1280),/rows\[2\] unknown at 1280px unequal height 124\/93/);
- const cards=postingFrame();cards.cards[2].height=110;
- assert.throws(()=>assertPostingLayout(cards,1280),/cards\[2\].*unequal height/);
- const overflow=postingFrame();overflow.scroll=1400;
- assert.throws(()=>assertPostingLayout(overflow,1280),/page overflow/);
-});
-test('posting resize settles the requested viewport rather than accepting a previous frame',async()=>{
- const frames=[postingFrame(1598),postingFrame(1280,[93,93,124]),postingFrame()];let reads=0;
- const result=await stablePostingLayout(async()=>frames[Math.min(reads++,frames.length-1)],1280,{timeoutMs:200,stableMs:4,pollMs:2});
- assert.ok(reads>=4);assert.deepEqual(result,postingFrame());
-});
-test('stable posting height mismatch is returned as evidence and still fails its assertion',async()=>{
- const bad=postingFrame(1280,[93,93,124]);
- const result=await stablePostingLayout(async()=>bad,1280,{timeoutMs:200,stableMs:4,pollMs:2});
- assert.deepEqual(result,bad);assert.throws(()=>assertPostingLayout(result,1280),/unequal height/);
-});
-test('posting wrong viewport retains last measured geometry in timeout diagnostics',async()=>{
- await assert.rejects(stablePostingLayout(async()=>postingFrame(1598),1280,{timeoutMs:15,stableMs:4,pollMs:2}),/did not settle at 1280px; last geometry:.*"width":1598/);
-});
-test('posting native diagnostics run before baseline and retry-layout assertions',()=>{
- const fs=require('node:fs'),path=require('node:path');
- const source=fs.readFileSync(require.resolve('./posting-r6.integration.cjs'),'utf8');
- assert.ok(source.indexOf("geometryEvidence('r63-posting-layout-'")<source.indexOf('assertPostingLayout(layout,width);'));
- assert.ok(source.indexOf("geometryEvidence('r63-posting-retry-layout-1280'")<source.indexOf('assertPostingLayout(retryLayout,1280)'));
- assert.match(source,/geometryEvidence\('r63-posting-failure'/);
- const css=fs.readFileSync(path.resolve(__dirname,'../../renderer/src/posting-workspace.css'),'utf8');
- assert.match(css,/\.inline-task-list\{display:grid;grid-template-columns:minmax\(0,1fr\);grid-auto-rows:minmax\(min-content,1fr\)\}/);
- assert.match(css,/\.task-failure-details p\{[^}]*white-space:normal;overflow:visible/);
-});
-for(const name of ['posting-r6','nurture-reels-r6'])test(name+' standalone entry handles Electron ESM import but not a parent suite require',()=>{
+for(const name of ['nurture-reels-r6'])test(name+' standalone entry handles Electron ESM import but not a parent suite require',()=>{
  const {isStandaloneEntry}=require('./'+name+'.integration.cjs');
  const entry=require.resolve('./'+name+'.integration.cjs');
  assert.equal(isStandaloneEntry({isMain:true,electronVersion:undefined,entry:undefined}),true);
@@ -150,25 +114,4 @@ test('active cleanup requires both receipt actions disabled and retains the busy
  assert.doesNotThrow(()=>assertHeldReceiptControls(buttons,{active:true}));
  for(const index of [0,1]){const invalid=structuredClone(buttons);invalid[index].disabled=false;assert.throws(()=>assertHeldReceiptControls(invalid,{active:true}));}
  assert.throws(()=>assertHeldReceiptControls([{text:'定位关联采集任务',disabled:true},{text:'核验窗口清理',disabled:true}],{active:true}));
-});
-test('posting native CAS expectation matches the actual offline transport refusal without queueing',async()=>{
- const fs=require('node:fs');
- const {transformSync}=require('esbuild');
- const {postingCasRejectionMessage}=require('./posting-r6.integration.cjs');
- const source=fs.readFileSync(require.resolve('../../renderer/tests/fixtures/posting-r6.tsx'),'utf8');
- // Exercise the same fixture request implementation; omit only React imports
- // and its document mount, which belong to the real Electron gate.
- const transport=source.replace(/^import .+;\r?\n/gm,'').replace(/^createRoot\(.+;\s*$/m,'');
- const window={setInterval(){return 0;}};
- runInNewContext(transformSync(transport,{loader:'tsx',format:'cjs'}).code,{window,structuredClone});
- const fixture=window.postingFixture,request=window.collectorCore.request;
- const review=structuredClone(fixture.state.jobs[0]);
- const body={action:'start',job_ids:[review.id],reviewed:[review]};
- for(const change of [row=>row.caption='changed after review',row=>row.queue_revision++,row=>row.status='queued',row=>row.window_held=true,row=>row.submitted_at='2026-10-05T00:00:00Z']){
-  fixture.state.jobs[0]=structuredClone(review);change(fixture.state.jobs[0]);
-  const before=structuredClone(fixture.state.jobs);
-  await assert.rejects(request('/api/posting/command',{body}),error=>error.message===postingCasRejectionMessage);
-  assert.deepEqual(structuredClone(fixture.state.jobs),before,'rejected review never changes task state');
- }
- assert.equal(fixture.commands.length,5,'each denied start remains an observable intent');
 });

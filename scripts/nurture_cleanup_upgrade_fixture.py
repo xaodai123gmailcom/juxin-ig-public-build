@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -22,9 +23,9 @@ BASELINE_POSTING_SCHEMA_SHA256 = 'c56f627fc95d8f7e8539e164400418933394908d10f815
 SCHEMA_SHA256 = '105cc4955ae06ea2f59a94db1f6586c6826b8007dc2d5bba851abf7afac93775'
 CONTRACT = 'nurture-orphan-hold-upgrade-v1'
 CHRONOLOGY_CLOCK = 'perf_counter_ns-system-v1'
-RECOVERED = ('closed_legacy', 'closed_lost', 'archived_closed')
+RECOVERED = ('closed_legacy', 'closed_lost', 'archived_closed', 'prepared_posting')
 RETAINED = ('open', 'opening', 'closing', 'successor_lease', 'fresh_account_lease', 'queued_collection', 'queued_studio',
-            'queued_monitor', 'queued_action', 'prepared_posting', 'unknown_action',
+            'queued_monitor', 'queued_action', 'unknown_action',
             'inflight', 'unknown_profile', 'foreign_profile_owner', 'unknown_state')
 CASES = RECOVERED + RETAINED
 PROTECTED_TABLES = ('app_users', 'auth_sessions', 'native_browser_profiles', 'account_window_plans',
@@ -170,6 +171,9 @@ def seed(directory):
             raise RuntimeError('Historical upgrade fixture is not an intact database')
         before_jobs = {row['id']: row for row in rows(c, 'studio_jobs')}
         protected = {table: rows(c, table) for table in PROTECTED_TABLES}
+    spec = importlib.util.spec_from_file_location('upgrade_seed_archive_oracle', Path(__file__).with_name('retired_posting_archive_oracle.py'))
+    oracle = importlib.util.module_from_spec(spec); spec.loader.exec_module(oracle)
+    schema_before = oracle.capture_schema(database, ('posting_jobs',))
     manifest = {'contract': CONTRACT, 'baseline_commit': BASELINE_COMMIT,
         'baseline_database_sha256': BASELINE_DATABASE_SHA256,
         'baseline_posting_schema_sha256': BASELINE_POSTING_SCHEMA_SHA256, 'schema_sha256': SCHEMA_SHA256,
@@ -183,7 +187,8 @@ def seed(directory):
             'operation_type': 'account', 'entity_id': 'fresh-account-operation',
             'lease_token': 'fresh-account-successor-generation', 'acquired_at': HISTORY_TIME,
             'heartbeat_at': HISTORY_TIME, 'expires_at': FUTURE_TIME},
-        'before_jobs': before_jobs, 'protected_tables': protected, 'login_files': files(directory)}
+        'before_jobs': before_jobs, 'protected_tables': protected, 'login_files': files(directory),
+        'archive_schema_before': schema_before}
     manifest_path.write_text(json.dumps(manifest, sort_keys=True, ensure_ascii=False), encoding='utf-8')
     return manifest_path, manifest
 
@@ -217,13 +222,16 @@ def inspect_after(directory, manifest, proof):
                 if actual != before + [manifest['runtime_account_lease']]:
                     raise RuntimeError('Installed upgrade removed or replaced a successor or unrelated active lease')
             elif table == 'posting_jobs':
-                observed = [dict(row) for row in actual]
-                revisions = [row.pop('queue_revision', None) for row in observed]
-                if not all(type(value) is int and value == 0 for value in revisions) or observed != before:
-                    raise RuntimeError('Installed upgrade changed protected posting fields or queue generation')
+                expected_active = [row for row in before if row['id'] == 'unrelated-job']
+                if actual != expected_active:
+                    raise RuntimeError('Installed upgrade changed quarantined posting ownership or retained an idle association')
+                import importlib.util
+                spec = importlib.util.spec_from_file_location('upgrade_archive_oracle', Path(__file__).with_name('retired_posting_archive_oracle.py'))
+                oracle = importlib.util.module_from_spec(spec); spec.loader.exec_module(oracle)
+                oracle.inspect_archive(directory / manifest['database_name'], {'posting_jobs': before}, expected_schema=manifest['archive_schema_before'], retained_rows={('posting_jobs', 'unrelated-job')})
             elif actual != before:
                 raise RuntimeError('Installed upgrade changed protected table ' + table)
-        if rows(c, 'posting_withdraw_history'):
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='posting_withdraw_history'").fetchone() and rows(c, 'posting_withdraw_history'):
             raise RuntimeError('Installed upgrade manufactured a posting withdrawal')
         all_jobs = {row['id']: row for row in rows(c, 'studio_jobs')}
         for ident, before in manifest['before_jobs'].items():

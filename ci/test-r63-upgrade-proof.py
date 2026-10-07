@@ -41,5 +41,20 @@ class UpgradeStagingContract(unittest.TestCase):
    with self.assertRaises(RuntimeError):self.validate(p)
   p=copy.deepcopy(self.proof);p['admission']['closed_legacy']['new_task_after']=False
   with self.assertRaises(RuntimeError):self.validate(p)
+ def test_retired_prepared_state_reconciles_without_restoring_a_scheduler(self):
+  self.assertEqual(self.proof['cases']['prepared_posting']['hold_after'],False)
+  self.assertIn('prepared_posting',self.proof['admission'])
+  for before,after in (('posting.retire_legacy','posting.recover'),('studio.start_scheduler','posting.start_scheduler')):
+   p=copy.deepcopy(self.proof);p['startup_sequence']=[after if step==before else step for step in p['startup_sequence']]
+   with self.assertRaises(RuntimeError):self.validate(p)
+  p=copy.deepcopy(self.proof);p['queued_blockers_before_startup']['prepared_posting']='posting'
+  with self.assertRaises(RuntimeError):self.validate(p)
+  p=copy.deepcopy(self.proof);p['admission'].pop('prepared_posting')
+  with self.assertRaises(RuntimeError):self.validate(p)
+  for key,old in (('new_jobs',3),('recovered_holds',3),('retained_holds',15)):
+   p=copy.deepcopy(self.proof);p['persisted_state'][key]=old
+   with self.assertRaises(RuntimeError):self.validate(p)
+  p=copy.deepcopy(self.proof);p['synthetic_open_admissions']=3
+  with self.assertRaises(RuntimeError):self.validate(p)
 if __name__=='__main__':unittest.main()
 

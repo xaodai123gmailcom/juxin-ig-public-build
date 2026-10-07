@@ -5,7 +5,7 @@ import {StudioWorkspace} from '../../src/studio-workspace';
 import '../../src/formal-workbench.css';
 import '../../src/workbench-polish-r41.css';
 const makeJob=(id:string,status='failed',deleted_at:string|null=null)=>({id,kind:'nurture',profile_id:id,status,deleted_at,cursor:1,total_steps:22,message:`${id}：没有可浏览的快拍`,created_at:'2026-09-12T00:37:08Z',due_at:'2026-09-12T00:37:08Z',config:{},result:{failure:{stage:'完成 1/22 步',message:'没有可浏览的快拍',at:'2026-09-12T00:38:01Z'},counts:{browse:1}}});
-const state={jobs:[makeJob('failed-one'),makeJob('failed-two'),makeJob('active-cleanup'),makeJob('needs-confirmation','needs_review'),makeJob('archived','failed','2026-09-17T00:00:00Z'),makeJob('running','running')],assets:[],templates:{nurture:{}},totals:[],daily:[],monitor_totals:{added:0,repeated:0},credentials:{pexels_configured:false,ai_configured:false},active_ids:['active-cleanup','running']};
+const state={jobs:[makeJob('failed-one'),makeJob('failed-two'),makeJob('active-cleanup'),makeJob('needs-confirmation','needs_review'),makeJob('archived','failed','2026-09-17T00:00:00Z'),makeJob('running','running')],assets:[],templates:{nurture:{}},totals:[],daily:[],monitor_totals:{added:0,repeated:0},credentials:{ai_configured:false},active_ids:['active-cleanup','running']};
 const fixture={mode:'success',holdNext:false,holdCommand:false,snapshots:0,release:undefined as undefined|(()=>void),releaseCommand:undefined as undefined|(()=>void),commands:[] as any[],poll:undefined as undefined|(()=>void)};
 Object.assign(window,{fixture});
 // Drive the four-second poll deterministically, without sleeping in the tests.

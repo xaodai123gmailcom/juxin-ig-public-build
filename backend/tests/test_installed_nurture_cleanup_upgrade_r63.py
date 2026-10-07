@@ -74,7 +74,7 @@ class InstalledNurtureCleanupUpgradeTests(unittest.TestCase):
         result = probe.validate_nurture_cleanup_upgrade_proof(self.proof, **self.arguments)
         state = fixture.inspect_after(self.root, self.manifest, result)
         self.assertEqual({'verified': True, 'historical_jobs': 19, 'protected_tables': 15,
-            'login_files': 68, 'recovered_holds': 3, 'retained_holds': 15, 'new_jobs': 3,
+            'login_files': 68, 'recovered_holds': 4, 'retained_holds': 14, 'new_jobs': 4,
             'global_dedupe_identities': 3, 'untouched_leases': 3, 'expected_startup_action_pauses': 1}, state)
         self.assertEqual(18, len(result['cases']))
         self.assertNotEqual(result['seed_pid'], result['runtime']['pid'])
@@ -163,8 +163,6 @@ class InstalledNurtureCleanupUpgradeTests(unittest.TestCase):
             'fresh_lease_loss': "DELETE FROM browser_operation_leases WHERE lease_token='fresh-account-successor-generation'",
             'action_mutation': "UPDATE action_campaigns SET limit_count=999",
             'posting_content': "UPDATE posting_jobs SET caption='changed by upgrade'",
-            'posting_generation': "UPDATE posting_jobs SET queue_revision=99",
-            'posting_withdrawal': "INSERT INTO posting_withdraw_history VALUES('forged','forged','forged','forged','forged','forged','now')",
             'extra_job': "DELETE FROM studio_jobs WHERE request_key LIKE 'upgrade-admission-after-closed_legacy%'",
         }
         for name, sql in mutations.items():
@@ -185,6 +183,24 @@ class InstalledNurtureCleanupUpgradeTests(unittest.TestCase):
             first = next(iter(self.manifest['login_files']))
             (target / first).write_bytes(b'damaged login data')
             with self.assertRaisesRegex(RuntimeError, 'login/profile'):
+                fixture.inspect_after(target, self.manifest, self.proof)
+
+    def test_coordinated_schema_loss_cannot_redefine_prelaunch_upgrade_authority(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / 'copy'; shutil.copytree(self.root, target)
+            database = target / self.manifest['database_name']
+            with closing(sqlite3.connect(database)) as c, c:
+                c.execute('DROP INDEX posting_jobs_window')
+            originals = self.manifest['archive_schema_before']['posting_jobs']
+            self.assertTrue(any(row['name'] == 'posting_jobs_window' for row in originals))
+            remaining = [row for row in originals if row['name'] != 'posting_jobs_window']
+            ordered = sorted(remaining, key=lambda row: ({'table': 0, 'index': 1, 'trigger': 2}[row['type']], row['name']))
+            script = '\n'.join(row['sql'].rstrip(';') + ';' for row in ordered)
+            archive = Path(str(database) + '.posting-retirement') / 'archive.sqlite3'
+            with closing(sqlite3.connect(archive)) as c, c:
+                c.execute("UPDATE archived_schema SET schema_sql=?,schema_sha256=? WHERE source_table='posting_jobs'", (script, hashlib.sha256(script.encode()).hexdigest()))
+            with self.assertRaisesRegex(RuntimeError, 'independent prelaunch authority'):
                 fixture.inspect_after(target, self.manifest, self.proof)
 
     def test_removed_orphan_reconciliation_fails_the_real_process(self):
@@ -314,17 +330,16 @@ class InstalledNurtureCleanupUpgradeTests(unittest.TestCase):
             with patch.object(probe, 'probe_core', return_value={'verified': True}), \
                  patch.object(probe, 'probe_collection_completion', return_value=collection) as c, \
                  patch.object(probe, 'probe_standalone_nurture', return_value={'existing_cases': 7}) as n, \
-                 patch.object(probe, 'probe_posting_workflow', return_value={'existing_cases': 5}) as p, \
                  patch.object(probe, 'probe_nurture_cleanup_upgrade', return_value={'new_cases': 18}) as u, \
                  patch.object(sys, 'argv', ['verify', '--executable', sys.executable, '--log', str(root / 'core.log'),
-                    '--collection-completion', '--standalone-nurture', '--posting-workflow',
+                    '--collection-completion', '--standalone-nurture',
                     '--nurture-cleanup-upgrade', '--report', str(report)]):
                 self.assertEqual(0, probe.main())
             result = json.loads(report.read_text())
             self.assertEqual({'new_cases': 18}, result['nurture_cleanup_upgrade'])
             self.assertEqual(7, result['standalone_nurture']['existing_cases'])
-            self.assertEqual(5, result['posting_workflow']['existing_cases'])
-            for call in (c, n, p, u):
+            self.assertNotIn('posting_workflow', result)
+            for call in (c, n, u):
                 call.assert_called_once()
             self.assertNotIn('require_installed', u.call_args.kwargs)
 

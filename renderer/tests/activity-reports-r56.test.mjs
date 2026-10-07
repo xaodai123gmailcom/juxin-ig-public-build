@@ -18,12 +18,12 @@ async function withTimezone(zone, callback) {
   const previous = process.env.TZ; process.env.TZ = zone;
   try {return await callback()} finally {if(previous === undefined) delete process.env.TZ; else process.env.TZ = previous}
 }
-const counts = extra => ({follow: 0, greet: 0, split: 0, added: 0, posting: 0, collection: 0, check: 0, nurture: 0, approved: 0, confirmed_posting: 0, ...extra});
+const counts = extra => ({follow: 0, greet: 0, split: 0, added: 0, collection: 0, check: 0, nurture: 0, approved: 0, ...extra});
 const row = (id, extra = {}) => ({profile_id: `window-${id}`, window_name: `窗口 ${id}`, username: `operator.${id}`, instagram_user_id: `ig-${id}`, ...counts(), ...extra});
 const report = (rows = [], extra = {}) => ({start: '2026-09-23T00:00:00.000Z', end: '2026-09-24T00:00:00.000Z', rows, totals: counts(), unattributed: 0, ...extra});
-const summary = (totals = {}, extra = {}) => ({start: '2026-09-23T00:00:00.000Z', end: '2026-09-24T00:00:00.000Z', totals: {collection: 0, follow: 0, split: 0, added: 0, confirmed_posting: 0, ...totals}, ...extra});
+const summary = (totals = {}, extra = {}) => ({start: '2026-09-23T00:00:00.000Z', end: '2026-09-24T00:00:00.000Z', totals: {collection: 0, follow: 0, split: 0, added: 0, ...totals}, ...extra});
 const plain = value => JSON.parse(JSON.stringify(value));
-const metricLabels = {follow: '私密点关注', greet: '公开打招呼', split: '分裂数量', added: '新增数量', posting: '历史发帖（原功能）', confirmed_posting: '新队列确认发帖', collection: '采集账号', check: '关注检查（轮）', nurture: '养号完成（轮）', approved: '审核合格'};
+const metricLabels = {follow: '私密点关注', greet: '公开打招呼', split: '分裂数量', added: '新增数量', collection: '采集账号', check: '关注检查（轮）', nurture: '养号完成（轮）', approved: '审核合格'};
 
 function loadComponent(hooks = {}, api = () => Promise.resolve(report()), browser = {}) {
   const module = {exports: {}}, jsx = (type, props) => ({type, props: props ?? {}});
@@ -89,7 +89,7 @@ function mount(api, now = '2026-09-23T12:00:00.000Z') {
     button(label) {const found = view.all('button').filter(node => textOf(node).includes(label)); assert.equal(found.length, 1, `one button for ${label}`); return found[0]},
     click(label) {const button = view.button(label); assert.equal(Boolean(button.props.disabled), false, `${label} enabled`); button.props.onClick()},
     date(value) {view.all('input').find(node => node.props.type === 'date').props.onChange({target: {value}})},
-    knownCards() {return Object.fromEntries(Object.entries(view.cards()).filter(([key]) => key !== 'posting'))},
+    knownCards() {return view.cards()},
     cards() {return Object.fromEntries(view.all('div').filter(node => node.props.className?.startsWith('report-card ')).map(node => [node.props.className.match(/report-card report-(\w+)/)[1], {label: textOf(node.props.children[0]), value: textOf(node.props.children[1])}]))},
     text() {return textOf(view.tree)},
     dispose() {if(!mounted) return; mounted = false; frames.forEach(cleanup)},
@@ -152,7 +152,7 @@ test('workspace loads only four summary totals and removes the whole details pan
   const calls = [], view = mount(async (...args) => {calls.push(plain(args)); return summary({collection: 10001, follow: 21, split: 31, added: 41})});
   try {
     await view.settle(); assert.equal(calls.length, 1); assert.equal(calls[0][0], 'activity'); assert.deepEqual(calls[0][3], {summaryOnly: true});
-    assert.deepEqual(view.cards(), {collection: {label: '采集总数', value: '10,001'}, follow: {label: '私密点关注成功数', value: '21'}, split: {label: '分裂数量', value: '31'}, added: {label: '新增数量', value: '41'}, posting: {label: '发帖数量', value: '0'}});
+    assert.deepEqual(view.cards(), {collection: {label: '采集总数', value: '10,001'}, follow: {label: '私密点关注成功数', value: '21'}, split: {label: '分裂数量', value: '31'}, added: {label: '新增数量', value: '41'}});
     assert.doesNotMatch(view.text(), /窗口与账号明细|执行窗口|执行账号|本地时区|暂无完成记录/);
     assert.equal(view.button('展开数据概览').props['aria-expanded'], false); assert.doesNotMatch(view.text(), /累计数据概览内容/);
     assert.equal(view.all('table').length, 0); assert.deepEqual(view.all('h2').map(textOf), ['数据概览']);
@@ -176,9 +176,9 @@ test('pending or incomplete summaries never display invented zero counts or enab
   } finally {view.dispose()}
 });
 
-test('CSV lazily fetches a complete fresh report with all nine metrics and aggregate totals', async () => {
-  const first = row('a', counts({collection: 3, follow: 5, split: 7, added: 9, greet: 11, posting: 13, check: 15, nurture: 17, approved: 19}));
-  const second = row('b', counts({collection: 2, follow: 4, split: 6, added: 8, greet: 10, posting: 12, check: 14, nurture: 16, approved: 18}));
+test('CSV lazily fetches a complete fresh report with all eight metrics and aggregate totals', async () => {
+  const first = row('a', counts({collection: 3, follow: 5, split: 7, added: 9, greet: 11, check: 15, nurture: 17, approved: 19}));
+  const second = row('b', counts({collection: 2, follow: 4, split: 6, added: 8, greet: 10, check: 14, nurture: 16, approved: 18}));
   const totals = Object.fromEntries(Object.keys(metricLabels).map(key => [key, first[key] + second[key]]));
   const calls = [], pending = deferred(), view = mount((...args) => {calls.push(plain(args)); return args[3]?.summaryOnly ? Promise.resolve(summary({split: 4})) : pending.promise});
   try {
@@ -393,7 +393,7 @@ test('native R6 report fixture bundles the actual App and checks the complete re
   const built = await buildFixture();
   assert.ok(built.outputFiles.some(file => file.path.endsWith('.js') && file.contents.length > 1000));
   assert.ok(built.outputFiles.some(file => file.path.endsWith('.css') && file.contents.length > 0));
-  const valid = {cards: [{label: '采集总数', value: '433'}, {label: '私密点关注成功数', value: '0'}, {label: '分裂数量', value: '2'}, {label: '新增数量', value: '0'}, {label: '发帖数量', value: '7'}],
+  const valid = {cards: [{label: '采集总数', value: '433'}, {label: '私密点关注成功数', value: '0'}, {label: '分裂数量', value: '2'}, {label: '新增数量', value: '0'}],
     details: false, tables: 0, searches: 0, date: '2026-10-03', controls: ['当日', '当周', '当月', '回到今天', '刷新报表', '导出 CSV'], tabs: ['工作统计', '分裂号审查', '私密关注检查']};
   assertSummaryState(valid);
   for(const invalid of [{details: true}, {tables: 1}, {searches: 1}, {cards: valid.cards.slice(0, 3)}, {controls: ['当日']}, {tabs: ['工作统计']}])
@@ -461,58 +461,36 @@ test('legacy data URLs replace their history entry with the single report page o
   }
 });
 
-test('the fifth card uses only confirmed receipts and preserves loading, failure and legacy-Core unknown states', async () => {
-  const pending = deferred(), calls = []; let reads = 0;
-  const view = mount((...args) => {
-    calls.push(plain(args));
-    if(!args[3]?.summaryOnly) return Promise.resolve(report([], {totals: counts({posting: 123, confirmed_posting: 7})}));
-    if(++reads === 1) return pending.promise;
-    if(reads === 2) return Promise.reject(new Error('summary offline'));
-    return Promise.resolve(summary({posting: 999, confirmed_posting: undefined}));
-  });
-  const check = value => {
-    assert.deepEqual(Object.keys(view.cards()), ['collection', 'follow', 'split', 'added', 'posting']);
-    assert.deepEqual(view.cards().posting, {label: '发帖数量', value});
-    const card = view.all('div').find(node => node.props.className === 'report-card report-posting');
-    assert.equal(card.props.role, 'group'); assert.match(card.props['aria-label'], /确认.*回执/); assert.match(card.props.title, /历史人工确认不计入/);
-  };
-  try {
-    await view.settle(); check('读取中'); assert.equal(calls.length, 1);
-    pending.resolve(summary({collection: 1234567890, follow: 1234567890, split: 1234567890, added: 1234567890, confirmed_posting: 7}));
-    await view.settle(); check('7');
-    assert.ok(Object.values(view.knownCards()).every(card => card.value === '1,234,567,890'));
-    for(const card of view.all('div').filter(node => node.props.className?.startsWith('report-card '))) {
-      const strong = card.props.children[1];
-      assert.equal(strong.props.style['--report-value-length'], Math.max(textOf(strong).length, 6));
-    }
-    view.click('导出 CSV'); await view.settle(); check('7'); assert.equal(calls.length, 2);
-    view.click('刷新报表'); await view.settle(); assert.match(view.text(), /summary offline/);
-    view.click('刷新报表'); await view.settle(); check('—'); assert.ok(Object.values(view.knownCards()).every(card => card.value === '0'));
-    assert.equal(calls.length, 4); assert.ok(calls.filter(call => call.length === 4).every(call => JSON.stringify(call[3]) === '{"summaryOnly":true}'));
-  } finally {view.dispose()}
+test('retired report fields are not rendered or exported from a legacy response', async () => {
+ const view=mount((...args)=>Promise.resolve(args[3]?.summaryOnly?summary({posting:999,confirmed_posting:7}):report([], {totals:counts({posting:999,confirmed_posting:7})})));
+ try {
+  await view.settle();assert.deepEqual(Object.keys(view.cards()),['collection','follow','split','added']);
+  assert.doesNotMatch(view.text(),/发帖|发布/);view.click('导出 CSV');await view.settle();
+  assert.equal(view.downloads.length,1);assert.doesNotMatch(await view.downloads[0].blob.text(),/发帖|confirmed_posting|posting/);
+ } finally {view.dispose()}
 });
 
-test('five-card grid keeps fixed tracks and full numbers, with desktop and narrow native geometry guards', () => {
+test('four-card grid keeps fixed tracks and full numbers, with desktop and narrow native geometry guards', () => {
   const css = readFileSync(new URL('../src/reports-workspace.css', import.meta.url), 'utf8');
-  assert.match(css, /\.report-summary\s*\{[^}]*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.report-summary\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(css, /grid-template-rows:\s*32px 44px 18px/);
   assert.match(css, /font-size:\s*min\(36px, calc\(150cqw \/ var\(--report-value-length, 6\)\)\)/);
   assert.match(css, /@media \(max-width: 900px\)\s*\{\s*\.report-summary/);
   const {assertCardAlignment} = createRequire(import.meta.url)('../../desktop/tests/work-report-summary-r6.integration.cjs');
   const make = columns => {
     const width = (1000 - (columns - 1) * 14) / columns;
-    return {viewportWidth: 1100, summary: {left: 0, right: 1000, clientWidth: 1000, scrollWidth: 1000}, cards: Array.from({length: 5}, (_, index) => {
+    return {viewportWidth: 1100, summary: {left: 0, right: 1000, clientWidth: 1000, scrollWidth: 1000}, cards: Array.from({length: 4}, (_, index) => {
       const left = index % columns * (width + 14), top = Math.floor(index / columns) * 163;
       return {left, top, right: left + width, bottom: top + 149, width, height: 149, clientWidth: width - 2, scrollWidth: width - 2,
         label: {top: top + 20}, value: {top: top + 60, height: 44, clientWidth: width - 38, scrollWidth: width - 38}, unit: {top: top + 112}};
     })};
   };
-  for(const columns of [5, 2, 1]) assertCardAlignment(make(columns), columns);
+  for(const columns of [4, 2, 1]) assertCardAlignment(make(columns), columns);
   for(const mutate of [value => value.cards.pop(), value => value.cards[1].top++, value => value.cards[1].height += 3,
-    value => value.cards[1].width += 3, value => value.cards[1].value.top += 3, value => value.cards[4].value.scrollWidth += 3]) {
-    const invalid = make(5); mutate(invalid);
+    value => value.cards[1].width += 3, value => value.cards[1].value.top += 3, value => value.cards[3].value.scrollWidth += 3]) {
+    const invalid = make(4); mutate(invalid);
     // One-pixel rounding is allowed; make top-only mutations exceed that tolerance.
     if(invalid.cards[1]?.top === 1) invalid.cards[1].top = 3;
-    assert.throws(() => assertCardAlignment(invalid, 5), {name: 'AssertionError'});
+    assert.throws(() => assertCardAlignment(invalid, 4), {name: 'AssertionError'});
   }
 });

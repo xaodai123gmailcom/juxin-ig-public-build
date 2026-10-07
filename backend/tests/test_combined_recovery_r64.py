@@ -1,147 +1,112 @@
-"""Merged recovery regression, using authenticated routes and disposable SQLite.
+"""Legacy idle retirement and hidden collection recovery on the same window.
 
-A queued post and an archived paused collection both block the same historical
-nurture hold. Neither local recovery action may clear the remaining blocker or
-substitute for affirmative closed-profile evidence. No browser/network/submit
-operation is permitted by the shared offline fixture.
+The posting executor/routes are gone. Retiring an idle posting association must
+never stand in for a versioned collection stop or authoritative window closure.
 """
 import json
+from pathlib import Path
 import unittest
+from app.posting_retirement import retire_legacy_posting
+import test_hidden_collection_blocker_r63 as hidden
 
-from app.service import isoformat
-import test_posting_withdraw_api_r63 as fixtures
-
+ROOT = Path(__file__).resolve().parents[2]
 
 class CombinedRecoveryR64Tests(unittest.TestCase):
-    def setUp(self):
-        self.fixture = fixtures.PostingWithdrawApiR63Tests()
-        self.addCleanup(self.fixture.doCleanups)
-        self.fixture.setUp()
-        fixture = self.fixture
-        service = fixture.app.state.service
-        owner = fixture.users['owner']
-        task = service.create_task(
-            owner, name='Merged hidden collection', modes=['followers'],
-            targets=['merged_fixture_source'], window_ids=[fixture.PROFILE], settings={},
-        )
-        self.task_id = task['id']
-        target_id = task['targets'][0]['id']
-        service.upsert_checkpoint(
-            owner, self.task_id, target_id, mode='followers', stage='completed',
-            cursor={'position':17}, counters={'saved':1},
-        )
-        service.record_result(
-            owner, self.task_id, target_id, username='merged_fixture_result',
-            instagram_user_id='merged-fixture-identity', source_mode='followers',
-            visibility='public', profile={'followers_count':4}, screening={}, qualified=False,
-        )
-        with fixture.db.write() as connection:
-            connection.execute("UPDATE tasks SET status='paused' WHERE id=?", (self.task_id,))
-            connection.execute(
-                "UPDATE task_targets SET status='completed', current_window_id=?, "
-                "current_stage='completed_archived' WHERE task_id=?",
-                (fixture.PROFILE, self.task_id),
-            )
-            connection.execute('INSERT INTO task_list_dismissals VALUES(?,?,?)',
-                               (self.task_id, owner, isoformat()))
-        self.original_review = fixture.reviewed(fixture.row('posting_jobs', fixture.POST))
-        self.collection_history = self.retained_collection_history()
-        for table in ('task_checkpoints', 'task_results', 'global_seen', 'global_identity_owners'):
-            self.assertTrue(self.collection_history[table], table+' must contain retained evidence')
+    setUp = hidden.HiddenCollectionBlockerTests.setUp
+    task = hidden.HiddenCollectionBlockerTests.task
+    command = hidden.HiddenCollectionBlockerTests.command
+    locate = hidden.HiddenCollectionBlockerTests.locate
+    stop = hidden.HiddenCollectionBlockerTests.stop
+    retained = hidden.HiddenCollectionBlockerTests.retained
 
-    def tearDown(self):
-        self.fixture.tearDown()
+    def seed_legacy_post(self):
+        # Exact independent legacy table, not a removed publishing initializer.
+        source = (ROOT / 'scripts/fixtures/nurture_cleanup_upgrade_r62.sql').read_text()
+        statement = next(part.strip() for part in source.split(';') if part.strip().startswith('CREATE TABLE posting_jobs('))
+        with self.db.write() as c:
+            c.execute(statement)
+            c.execute("INSERT INTO posting_jobs(id,owner_user_id,request_key,theme,caption,profile_id,status,created_at,updated_at) VALUES('legacy-idle',?,'legacy-idle','offline',?,'w1','queued','historical','historical')", (self.owner, 'Exact preserved caption\n保留 🌲'))
+            before = dict(c.execute("SELECT * FROM posting_jobs WHERE id='legacy-idle'").fetchone())
+        return before
 
-    def retained_collection_history(self):
-        tables = ('task_targets', 'task_checkpoints', 'task_results', 'task_list_dismissals',
-                  'task_mode_candidates', 'instagram_accounts', 'instagram_username_aliases',
-                  'global_seen', 'global_identity_owners', 'global_seen_stats',
-                  'global_seen_platform_stats')
-        with self.fixture.db.read() as connection:
-            return {table:[tuple(row) for row in connection.execute('SELECT * FROM '+table+' ORDER BY rowid')]
-                    for table in tables}
+    def assert_archived(self, original):
+        import sqlite3
+        from contextlib import closing
+        archive = Path(str(self.db.path) + '.posting-retirement') / 'archive.sqlite3'
+        with closing(sqlite3.connect(archive)) as c:
+            saved = json.loads(c.execute("SELECT row_json FROM archived_rows WHERE source_table='posting_jobs'").fetchone()[0])
+        self.assertEqual(original, saved)
+        with self.db.read() as c:
+            self.assertEqual(0, c.execute('SELECT count(*) FROM posting_jobs').fetchone()[0])
 
-    def studio_command(self, action, **fields):
-        fixture = self.fixture
-        return fixture.client.post('/api/studio/command', headers=fixture.headers['owner'],
-                                   json={'action':action, 'job_id':fixture.NURTURE, **fields})
-
-    def locate(self):
-        response = self.studio_command('locate_cleanup_collection')
-        self.assertEqual(200, response.status_code, response.text)
-        blocker = response.json()['blocker']
-        self.assertEqual(self.task_id, blocker['task_id'])
-        self.assertTrue(blocker['dismissed'])
-        self.assertTrue(blocker['can_stop'])
-        return blocker
-
-    def stop_collection(self, blocker):
-        response = self.studio_command('stop_cleanup_collection',
-                                       task_id=blocker['task_id'], version=blocker['version'])
-        self.assertEqual(200, response.status_code, response.text)
-        self.assertTrue(response.json()['cleanup_pending'])
-        self.assertEqual('stopped', response.json()['status'])
-        self.assertEqual(self.collection_history, self.retained_collection_history())
-
-    def assert_hold_preserved(self):
-        fixture = self.fixture
-        result = json.loads(fixture.row('studio_jobs', fixture.NURTURE)['result_json'])
-        self.assertTrue(result['window_hold'])
-        self.assertEqual(fixture.historical_result['counts'], result['counts'])
-        fixture.assert_preserved()
-        self.assertEqual(self.collection_history, self.retained_collection_history())
-
-    def assert_cleanup_blocked(self):
-        response = self.fixture.cleanup()
-        self.assertEqual(409, response.status_code, response.text)
-        self.assert_hold_preserved()
-
-    def finish_cleanup(self):
-        fixture = self.fixture
-        response = fixture.cleanup()
-        self.assertEqual(200, response.status_code, response.text)
-        self.assertTrue(response.json()['cleanup_reconciled'])
-        result = json.loads(fixture.row('studio_jobs', fixture.NURTURE)['result_json'])
-        self.assertFalse(result['window_hold'])
-        self.assertEqual(fixture.historical_result['counts'], result['counts'])
-        self.assertGreater(fixture.provider.proofs_completed, 0)
-        fixture.assert_preserved()
-        self.assertEqual(self.collection_history, self.retained_collection_history())
-
-    def test_withdraw_then_exact_stop_requires_closed_proof_and_fresh_review(self):
-        fixture = self.fixture
+    def test_retire_then_stop_preserves_collection_and_requires_separate_cleanup(self):
+        original = self.seed_legacy_post(); before = self.retained()
+        result = retire_legacy_posting(self.db)
+        self.assertEqual(1, result['retired_rows']); self.assert_archived(original)
+        self.assertEqual(before, self.retained())
+        self.assertEqual(409, self.command('control', operation='retry_cleanup').status_code)
         blocker = self.locate()
-        self.assert_cleanup_blocked()
-        fixture.withdraw()
-        self.assert_cleanup_blocked()  # Archived paused collection still blocks.
-        self.stop_collection(blocker)
-        self.assert_hold_preserved()  # Neither local transition clears the hold.
-        self.finish_cleanup()
-        response = fixture.command({'action':'assign', 'job_id':fixture.POST,
-                                    'profile_id':fixture.PROFILE, 'expected_username':fixture.USERNAME})
-        self.assertEqual(200, response.status_code, response.text)
-        stale = fixture.command({'action':'start', 'job_ids':[fixture.POST],
-                                 'reviewed':[self.original_review]})
-        self.assertEqual(409, stale.status_code, stale.text)
-        self.assertEqual('ready', fixture.row('posting_jobs', fixture.POST)['status'])
-        current = fixture.row('posting_jobs', fixture.POST)
-        response = fixture.command({'action':'start', 'job_ids':[fixture.POST],
-                                    'reviewed':[fixture.reviewed(current)]})
-        self.assertEqual(200, response.status_code, response.text)
-        self.assertEqual('queued', fixture.row('posting_jobs', fixture.POST)['status'])
-        fixture.assert_preserved()
+        self.assertEqual(409, self.command('stop_cleanup_collection', task_id=self.ident, version=blocker['version']-1).status_code)
+        self.assertEqual(200, self.stop(blocker).status_code)
+        self.assertEqual(before, self.retained())
+        clean = self.command('control', operation='retry_cleanup')
+        self.assertEqual(200, clean.status_code, clean.text)
+        self.assertTrue(clean.json()['cleanup_reconciled'])
+        self.assert_archived(original)
+        self.assertEqual(404, self.client.post('/api/posting/command', headers=self.headers['owner'], json={'action':'start','job_ids':['legacy-idle']}).status_code)
 
-    def test_exact_stop_then_withdraw_keeps_remaining_posting_blocker(self):
-        fixture = self.fixture
-        self.assert_cleanup_blocked()
-        self.stop_collection(self.locate())
-        self.assert_cleanup_blocked()  # Queued post still owns its assignment.
-        fixture.withdraw()
-        self.assert_hold_preserved()
-        self.finish_cleanup()
-        self.assertEqual('ready', fixture.row('posting_jobs', fixture.POST)['status'])
-        self.assertEqual('', fixture.row('posting_jobs', fixture.POST)['profile_id'])
+    def test_stop_then_retire_never_replays_or_restores_hidden_history(self):
+        original = self.seed_legacy_post(); before = self.retained()
+        self.assertEqual(200, self.stop().status_code)
+        self.assertEqual(before, self.retained())
+        self.assertEqual(1, retire_legacy_posting(self.db)['retired_rows'])
+        self.assert_archived(original)
+        self.assertEqual(before, self.retained())
+        self.assertEqual(0, retire_legacy_posting(self.db)['retired_rows'])
+        self.assertIsNone(self.locate())
+        self.assertEqual(200, self.command('control', operation='retry_cleanup').status_code)
 
+    def test_successor_owner_blocks_stop_and_survives_retirement(self):
+        original = self.seed_legacy_post(); before = self.retained()
+        with self.db.write() as c:
+            c.execute('INSERT INTO browser_operation_leases VALUES(?,?,?,?,?,?,?,?)',
+                ('w1',self.owners['other'],'account','successor','different-generation','2099','2099','2099'))
+        with self.db.read() as c: lease = tuple(c.execute('SELECT * FROM browser_operation_leases').fetchone())
+        retire_legacy_posting(self.db)
+        self.assert_archived(original)
+        self.assertFalse(self.locate()['can_stop'])
+        self.assertEqual(409, self.stop().status_code)
+        self.assertEqual(409, self.command('control', operation='retry_cleanup').status_code)
+        self.assertEqual(before, self.retained())
+        with self.db.read() as c: self.assertEqual(lease, tuple(c.execute('SELECT * FROM browser_operation_leases').fetchone()))
 
-if __name__ == '__main__':
-    unittest.main()
+class InstalledScenarioAsgiContractTests(unittest.TestCase):
+    def test_exact_installed_scenario_uses_real_routes_and_independent_oracle(self):
+        """ASGI + mocked closed browser only; never an installed release claim."""
+        import importlib.util
+        import tempfile
+        from fastapi.testclient import TestClient
+        from app.config import Settings
+        from app.database import Database
+        from app.main import create_app
+        spec = importlib.util.spec_from_file_location('installed_scenario_contract', ROOT / 'scripts/verify_installed_recovery_r64.py')
+        probe = importlib.util.module_from_spec(spec); spec.loader.exec_module(probe)
+        with tempfile.TemporaryDirectory(prefix='r64-exact-api-mock-') as directory:
+            root = Path(directory); _, manifest = probe.fixture.seed(root)
+            settings = Settings(startup_token=manifest['nonce'], database_path=root / 'collector.sqlite3', data_dir=root)
+            app = create_app(settings, database=Database(settings.database_path), bitbrowser=hidden.Browser())
+            with TestClient(app) as client:
+                headers = {'X-Startup-Token': settings.startup_token}
+                def api(path, body=None):
+                    response = client.get(path, headers=headers) if body is None else client.post(path, headers=headers, json=body)
+                    value = response.json()
+                    if path == '/api/session/resume' and response.is_success:
+                        headers['Authorization'] = 'Bearer ' + value['session_token']
+                    return {'ok': True, 'body': value} if response.is_success else {'ok': False, 'status': response.status_code, 'error': value}
+                result = probe.exercise(api, root, manifest)
+                self.assertEqual(dict.fromkeys(probe.FLAGS, True), result['checks'])
+                self.assertEqual(17, len(result['api_calls']))
+                self.assertEqual(5, result['persisted_state']['archive']['archived_rows'])
+            probe.fixture.inspect(root, manifest, phase='complete')
+
+if __name__ == '__main__': unittest.main()

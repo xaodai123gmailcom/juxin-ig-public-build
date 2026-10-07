@@ -63,18 +63,18 @@ test('lazy mount loads only studio once and reuses all four existing Core counte
   assert.equal(studioReads,0,'no fetch during render; effect begins the lazy request');
   assert.equal(coreReads,0);
   const initial=countText(view.tree);
-  assert.deepEqual(Object.keys(initial),['总采集','公开账号','私密账号','全局去重','累计检查新增','重复新增','已完成养号轮次','已确认发帖']);
+  assert.deepEqual(Object.keys(initial),['总采集','公开账号','私密账号','全局去重','累计检查新增','重复新增','已完成养号轮次']);
   assert.equal(initial['总采集'],'2,345');assert.equal(initial['全局去重'],'9,876');
-  for(const label of ['累计检查新增','重复新增','已完成养号轮次','已确认发帖'])assert.equal(initial[label],'读取中');
+  for(const label of ['累计检查新增','重复新增','已完成养号轮次'])assert.equal(initial[label],'读取中');
   assert.doesNotMatch(text(view.tree),/暂无/);
   await flush();assert.equal(studioReads,1);
   view.render();view.render();assert.equal(studioReads,1);
   response.resolve(studio());await flush();view.render();
-  assert.deepEqual(countText(view.tree),{'总采集':'2,345','公开账号':'2,100','私密账号':'245','全局去重':'9,876','累计检查新增':'140','重复新增':'17','已完成养号轮次':'23','已确认发帖':'7'});
+  assert.deepEqual(countText(view.tree),{'总采集':'2,345','公开账号':'2,100','私密账号':'245','全局去重':'9,876','累计检查新增':'140','重复新增':'17','已完成养号轮次':'23'});
   assert.equal(coreReads,0);assert.equal(view.button().props.disabled,false);
   assert.match(text(view.tree),/不受上方当日 \/ 当周 \/ 当月筛选影响/);
-  assert.match(text(view.tree),/每日完成记录（UTC）/);assert.match(text(view.tree),/2026-10-01发帖3/);
-  assert.match(text(view.tree),/发帖结果待确认19/);assert.match(text(view.tree),/备稿已完成5/);
+  assert.match(text(view.tree),/每日完成记录（UTC）/);assert.doesNotMatch(text(view.tree),/发帖|备稿|posting|material/);
+
  }finally{view.dispose()}
 });
 
@@ -104,15 +104,15 @@ test('valid empty studio totals establish real zeros and permit honest empty-sta
  const view=mount({client:{studioSnapshot:async()=>studio({totals:[],daily:[],monitor_totals:{added:0,repeated:0}})}});
  try{
   assert.doesNotMatch(text(view.tree),/暂无/);await flush();view.render();
-  for(const key of ['累计检查新增','重复新增','已完成养号轮次','已确认发帖'])assert.equal(countText(view.tree)[key],'0');
-  assert.match(text(view.tree),/暂无发帖或养号任务/);assert.match(text(view.tree),/暂无完成记录/);
+  for(const key of ['累计检查新增','重复新增','已完成养号轮次'])assert.equal(countText(view.tree)[key],'0');
+  assert.match(text(view.tree),/暂无养号任务/);assert.match(text(view.tree),/暂无完成记录/);
  }finally{view.dispose()}
 });
 
 test('invalid studio payloads cannot turn missing totals, missing monitoring metrics or invalid rows into zero',async()=>{
  for(const payload of [null,{},studio({totals:undefined}),studio({daily:undefined}),studio({monitor_totals:{added:0}}),studio({totals:[{kind:'nurture',status:'completed',count:NaN}]}),studio({daily:[{day:'2026-10-01',kind:'posting',count:-1}]})]){
   const view=mount({client:{studioSnapshot:async()=>payload}});
-  try{await flush();view.render();assert.match(text(view.tree),/统计不完整/);assert.doesNotMatch(text(view.tree),/暂无/);for(const key of ['累计检查新增','重复新增','已完成养号轮次','已确认发帖'])assert.equal(countText(view.tree)[key],'—')}
+  try{await flush();view.render();assert.match(text(view.tree),/统计不完整/);assert.doesNotMatch(text(view.tree),/暂无/);for(const key of ['累计检查新增','重复新增','已完成养号轮次'])assert.equal(countText(view.tree)[key],'—')}
   finally{view.dispose()}
  }
 });
@@ -134,7 +134,7 @@ test('swallowed Core refresh failure remains visible after studio succeeds and c
  try{
   await flush();view.render();view.click();await flush();view.render();
   assert.equal(coreReads,1);assert.match(text(view.tree),/authoritative Core failure/);
-  assert.equal(countText(view.tree)['已确认发帖'],'7');assert.match(text(view.tree),/上次成功结果/);
+  assert.equal(countText(view.tree)['已完成养号轮次'],'23');assert.match(text(view.tree),/上次成功结果/);
   view.render({snapshotError:null,snapshot:core({counts:{total_collected:2350,total_public:2105,total_private:245}})});
   assert.doesNotMatch(text(view.tree),/authoritative Core failure/);assert.equal(countText(view.tree)['总采集'],'2,350');
  }finally{view.dispose()}
@@ -146,13 +146,13 @@ test('both refresh errors preserve last known values through retry and independe
  try{
   await flush();view.render();phase=1;view.click();await flush();view.render();
   assert.match(text(view.tree),/studio refresh failed/);assert.match(text(view.tree),/Core refresh failed/);
-  assert.equal(countText(view.tree)['已确认发帖'],'7');assert.doesNotMatch(text(view.tree),/暂无/);
+  assert.equal(countText(view.tree)['已完成养号轮次'],'23');assert.doesNotMatch(text(view.tree),/暂无/);
   phase=2;view.click();await flush();view.render();
   assert.match(text(view.tree),/studio refresh failed/);assert.match(text(view.tree),/Core refresh failed/);
   retryCore.resolve(undefined);await flush();view.render();
   assert.doesNotMatch(text(view.tree),/Core refresh failed/);assert.match(text(view.tree),/studio refresh failed/);
   retryStudio.resolve(studio({totals:[],daily:[],monitor_totals:{added:0,repeated:0}}));await flush();view.render();
-  assert.doesNotMatch(text(view.tree),/refresh failed/);assert.equal(countText(view.tree)['已确认发帖'],'0');assert.equal(view.button().props.disabled,false);
+  assert.doesNotMatch(text(view.tree),/refresh failed/);assert.equal(countText(view.tree)['已完成养号轮次'],'0');assert.equal(view.button().props.disabled,false);
  }finally{view.dispose()}
 });
 
@@ -201,9 +201,9 @@ test('reader shares an in-flight refresh and disposed readers cannot start furth
  }finally{view.dispose()}
 });
 
-test('the overview is read-only, has no polling/subscription, and preserves historical posting without its old navigation',()=>{
+test('the overview is read-only, has no polling/subscription, and does not expose retired task statistics',()=>{
  assert.doesNotMatch(source,/studioCommand|configureIntegrations|startWorkbenchSnapshotPolling|setInterval|\.workReport\(|\.snapshot\(/);
- assert.match(source,/client\.studioSnapshot/);assert.match(source,/已确认发帖/);
+ assert.match(source,/client\.studioSnapshot/);assert.doesNotMatch(source,/已确认发帖/);
  assert.match(source,/kind === "completed"|row\.status === "completed"/);
  const css=readFileSync(new URL('../src/report-data-overview.css',import.meta.url),'utf8');
  assert.match(css,/grid-template-columns: repeat\(4/);assert.match(css,/@media \(max-width: 600px\)/);

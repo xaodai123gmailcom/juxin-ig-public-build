@@ -29,7 +29,7 @@ from .errors import (
 from .execution_manager import ExecutionManager
 from .follow_monitor import FollowMonitorManager
 from .studio import StudioManager
-from .posting_workflow import PostingManager
+from .posting_retirement import PostingRetirementError, retire_legacy_posting, reconcile_retired_posting
 from .account_workspace import AccountWorkspace
 from .schemas import (
     CampaignActionRequest,
@@ -117,12 +117,11 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.validate_bind()
+    # Discard a deprecated provider secret before any browser subprocess starts.
+    os.environ.pop('IGAC_PEXELS_API_KEY', None)
+    os.environ.pop('PEXELS_API_KEY', None)
     database = database or Database(settings.database_path)
     service = CoreService(database, session_hours=settings.session_hours)
-    # Private process memory only. The desktop owns encrypted persistence and
-    # redaction; provider requests resolve this supplier anew after key changes.
-    runtime_pexels = {"key": settings.pexels_api_key or ""}
-    os.environ.pop('IGAC_PEXELS_API_KEY', None)  # Do not inherit it into browser subprocesses.
 
     if bitbrowser is None:
         from .native_browser import BrowserHub, NativeBrowser
@@ -132,10 +131,7 @@ def create_app(
     execution_manager = ExecutionManager(service, bitbrowser)
     action_manager = ActionCampaignManager(service, bitbrowser)
     follow_monitor = FollowMonitorManager(service, bitbrowser)
-    # Legacy Studio posting stays disabled; the separately fenced posting queue
-    # below is the only admitted publishing route. Preserve historical records.
-    studio = StudioManager(service, bitbrowser, posting_enabled=False)
-    posting = PostingManager(service, bitbrowser, key_supplier=lambda: runtime_pexels['key'])
+    studio = StudioManager(service, bitbrowser)
     def cleanup_profile_active(profile_id):
         # Terminal database status is not proof that a coordinator has finished
         # draining. Consult every active manager before reconciling an orphaned
@@ -143,8 +139,9 @@ def create_app(
         collection_ids = execution_manager.active_task_ids()
         action_ids = action_manager.active_campaign_ids()
         monitor_ids = follow_monitor.active_run_ids()
-        posting_ids = posting.active_ids()
+        studio_ids = studio.active_ids()
         with database.read() as c:
+            if studio_ids and any(r[0] in studio_ids for r in c.execute('SELECT id FROM studio_jobs WHERE profile_id=?',(profile_id,))):return True
             if collection_ids and any(r[0] in collection_ids for r in c.execute(
                     'SELECT task_id FROM task_windows WHERE profile_id=? UNION SELECT task_id FROM task_targets WHERE current_window_id=?',
                     (profile_id,profile_id))):return True
@@ -152,10 +149,14 @@ def create_app(
                     'SELECT id FROM action_campaigns WHERE profile_id=?',(profile_id,))):return True
             if monitor_ids and any(r[0] in monitor_ids for r in c.execute(
                     'SELECT run.id FROM follow_monitor_runs run,json_each(run.profile_ids_json) profile WHERE profile.value=?',(profile_id,))):return True
-            if posting_ids and any(r[0] in posting_ids for r in c.execute(
-                    'SELECT id FROM posting_jobs WHERE profile_id=?',(profile_id,))):return True
         return False
     studio.cleanup_profile_active = cleanup_profile_active
+    def reconcile_legacy_for_nurture(owner, profile):
+        from .posting_retirement import legacy_profile_hold
+        with database.read() as connection:
+            if legacy_profile_hold(connection,profile) is None:return None
+        return reconcile_retired_posting(database,bitbrowser,owner,profile,active_profile=cleanup_profile_active)
+    studio.reconcile_retired_window = reconcile_legacy_for_nurture
     accounts = AccountWorkspace(service, bitbrowser)
     account_interference_locks: dict[str, asyncio.Lock] = {}
     accounts.surface.manual_control_active = execution_manager.manual_control_active
@@ -181,13 +182,21 @@ def create_app(
         database.acquire_instance_lock()
         try:
             database.initialize()
+            try:
+                retire_legacy_posting(database)
+                app.state.retirement_archive_pending = False
+            except PostingRetirementError:
+                # Retired execution is absent regardless of archive availability.
+                # Keep original rows and conservative ownership fences; unrelated
+                # collection, account and nurture work may still proceed safely.
+                import logging
+                app.state.retirement_archive_pending = True
+                logging.getLogger(__name__).warning('Historical local archive remains pending verification; active data and window ownership are preserved')
             service.recover_interrupted_operations()
-            posting.recover()
             follow_monitor.recover_interrupted()
             studio.recover()
             accounts.recover()
             studio.start_scheduler()
-            posting.start_scheduler()
             cloud.start()
             start_bitbrowser = getattr(bitbrowser, "start", None)
             if callable(start_bitbrowser):
@@ -211,7 +220,7 @@ def create_app(
                 cloud.wake.set()
                 await asyncio.to_thread(accounts.restore.capture_before_shutdown)
                 outcomes = await asyncio.gather(
-                    studio.shutdown(), posting.shutdown(), follow_monitor.shutdown(),
+                    studio.shutdown(), follow_monitor.shutdown(),
                     execution_manager.shutdown(), action_manager.shutdown(),
                     asyncio.to_thread(cloud.shutdown), snapshot_inventory.close(),
                     *([maintenance_task] if maintenance_task is not None else []),
@@ -245,7 +254,6 @@ def create_app(
     app.state.execution_manager = execution_manager
     app.state.action_manager = action_manager
     app.state.studio = studio
-    app.state.posting = posting
     app.state.accounts = accounts
     app.state.cloud = cloud
 
@@ -264,31 +272,6 @@ def create_app(
         if getattr(app.state, "shutting_down", False) and request.method not in {"GET", "HEAD"} and request.url.path != "/api/internal/shutdown":
             return JSONResponse(status_code=503, content={"detail":"应用正在退出，请等待当前任务保存完成", "code":"core_shutting_down"})
         return await call_next(request)
-
-    @app.post("/api/internal/integrations/pexels")
-    async def configure_runtime_pexels(request: Request) -> dict[str, bool]:
-        # Startup-token middleware is mandatory; this route is deliberately NOT
-        # permitted through the generic renderer HTTP bridge. Manual validation
-        # avoids validation libraries echoing a credential in error details.
-        import json
-        chunks = []
-        size = 0
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > 8192:
-                raise ValidationError('配置内容过大')
-            chunks.append(chunk)
-        try:
-            payload = json.loads(b''.join(chunks))
-        except (ValueError, UnicodeDecodeError):
-            raise ValidationError('配置格式无效') from None
-        if not isinstance(payload, dict) or set(payload) != {'pexels_api_key'} or type(payload['pexels_api_key']) is not str:
-            raise ValidationError('配置格式无效')
-        value = payload['pexels_api_key'].strip()
-        if len(value) > 2048 or any(ord(char) < 33 or ord(char) > 126 for char in value):
-            raise ValidationError('配置格式无效')
-        runtime_pexels['key'] = value
-        return {'configured': bool(value), 'activated': True}
 
     @app.post("/api/internal/integrations/cloud")
     async def configure_runtime_cloud(request: Request) -> dict[str, Any]:
@@ -595,7 +578,6 @@ def create_app(
                 active_action_entity_ids=action_manager.active_campaign_ids(),
                 active_monitor_entity_ids=follow_monitor.active_run_ids(),
                 active_studio_entity_ids=studio.active_ids(),
-                active_posting_entity_ids=posting.active_ids(),
                 # Both managers publish a startup fence before acquiring leases, so
                 # a row absent from those registries is a true residual lock and can
                 # be released on the first refresh instead of deselecting the window.
@@ -1643,6 +1625,14 @@ def create_app(
 
     @app.post("/api/accounts/command")
     async def account_workspace_command(payload: dict[str, Any],session: CurrentSession) -> dict[str, Any]:
+        if payload.get('action') == 'reconcile_window_state':
+            def reconcile_account_window():
+                with database.browser_surface_lock:
+                    row=accounts.get(session[0]['id'],str(payload.get('id','')))
+                    return reconcile_retired_posting(database,bitbrowser,session[0]['id'],row['profile_id'],
+                        active_profile=cleanup_profile_active)
+            from .studio import finish_preparation
+            return await finish_preparation(reconcile_account_window)
         return await asyncio.to_thread(accounts.command,session[0]["id"],payload)
 
     @app.post("/api/reports/query")
@@ -1656,15 +1646,6 @@ def create_app(
             raise ValidationError("无效报表汇总选项")
         options = {"summary_only": summary_only} if payload["kind"] == "activity" else {}
         return await asyncio.to_thread(method, service.database, str(session[0]["id"]), payload.get("start"), payload.get("end"), platform=validate_platform(payload.get("platform")), **options)
-
-    @app.get("/api/posting/snapshot")
-    async def posting_snapshot(session: CurrentSession, timezone: str = "UTC", cursor: str | None = Query(default=None, max_length=256), limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
-        return await asyncio.to_thread(posting.snapshot, str(session[0]['id']), timezone, cursor=cursor, limit=limit)
-
-    @app.post("/api/posting/command")
-    async def posting_command(payload: dict[str, Any], session: CurrentSession) -> dict[str, Any]:
-        validate_platform(payload.get('platform'))
-        return await posting.command(str(session[0]['id']), payload)
 
     @app.get("/api/studio/snapshot")
     async def studio_snapshot(session: CurrentSession) -> dict[str, Any]:

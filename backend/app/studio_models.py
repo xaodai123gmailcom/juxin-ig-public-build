@@ -4,36 +4,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class StudioModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
-class PostingConfig(StudioModel):
-    source: Literal['manual','pexels','ai'] = 'manual'
-    asset_ids: list[str] = Field(default_factory=list, max_length=10)
-    query: str = Field(default='', max_length=500)
-    media_type: Literal['photo','video'] = 'photo'
-    image_count: int = Field(default=3, ge=1, le=10)
-    caption_model: str = Field(default='', max_length=100, pattern=r'^[A-Za-z0-9._:/-]*$')
-    image_model: str = Field(default='', max_length=100, pattern=r'^[A-Za-z0-9._:/-]*$')
-    caption_instructions: str = Field(default='', max_length=1000)
-    caption: str = Field(default='', max_length=2200)
-    hashtags: str = Field(default='', max_length=600)
-    location: str = Field(default='', max_length=120)
-    auto_caption: bool = False
-    language: str = Field(default='中文', max_length=30)
-    concurrency: int = Field(default=1, ge=1)
-    interval_seconds: int = Field(default=60, ge=0, le=86400)
-    scheduled_at: str = ''
-    @model_validator(mode='after')
-    def check_caption(self):
-        self.asset_ids = list(dict.fromkeys(self.asset_ids))
-        self.query = self.query.strip()
-        self.location = self.location.strip()
-        if self.source == 'ai' and self.media_type == 'video':
-            raise ValueError('AI 生成暂支持图片；视频请选择手动加入或 Pexels')
-        if len(self.caption + '\n' + self.hashtags) > 2200:
-            raise ValueError('文案与标签合计不能超过 2200 字符')
-        if self.media_type == 'video' and len(self.asset_ids) > 1:
-            raise ValueError('视频每次选择一个素材')
-        return self
-
 class NurtureConfig(StudioModel):
     stage: Literal['适应期','稳定期','维护期'] = '适应期'
     surfaces: list[Literal['feed','reels','stories','post','profile','search']] = Field(default_factory=lambda:['reels'], min_length=1)

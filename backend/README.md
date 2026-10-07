@@ -28,6 +28,24 @@ environment and installed dependencies. Tests must use their isolated fixtures.
 The full Windows builder adds mandatory real-browser, native, packaged-runtime
 and installed gates; do not interpret the backend suite as those separate stages.
 
-Cloud is off until explicitly configured with the user's own project. Pexels and
-other credential-based integrations require valid user configuration. No project
+Cloud is off until explicitly configured with the user's own project.
+Credential-based integrations require valid user configuration. No project
 endpoint, service credential or user database is supplied by this repository.
+
+## Retired-feature upgrades
+
+Startup disables retired publishing execution independently of migration. Legacy
+rows and canonical material bytes are copied to a separate
+`<database filename>.posting-retirement` archive and verified before safe active
+references are retired. Original material files are retained unchanged; this is
+copy-plus-active-row retirement, not physical file relocation or disk cleanup.
+Archives are not included in new cloud backups. Older cloud downloads containing
+retired content are preserved in a verified local archive before restoring only
+supported collection, account and nurture data.
+
+Uncertain outcomes and real window ownership remain fenced. The authenticated
+closed-window verification action requires authoritative provider proof, no live
+owner and the same exact lease generation before recording an archive receipt
+and releasing that generation. It never closes a browser or retries an external
+submission. Missing/corrupt material or failed archive verification leaves source
+records intact while unrelated supported work remains available.

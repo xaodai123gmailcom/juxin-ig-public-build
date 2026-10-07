@@ -37,8 +37,6 @@ def main() -> None:
                         help="Run isolated offline collection-completion verification and exit")
     parser.add_argument("--verify-standalone-nurture", action="store_true",
                         help="Run isolated offline standalone nurture verification and exit")
-    parser.add_argument("--verify-posting-workflow", action="store_true",
-                        help="Run isolated offline posting queue and receipt verification and exit")
     parser.add_argument("--verify-nurture-cleanup-upgrade", metavar="MANIFEST",
                         help="Verify externally persisted offline R6.2 orphan-hold upgrade and exit")
     args = parser.parse_args()
@@ -48,13 +46,6 @@ def main() -> None:
         except ImportError:
             from app.nurture_cleanup_upgrade_selftest import main as verify_nurture_cleanup_upgrade
         verify_nurture_cleanup_upgrade(args.verify_nurture_cleanup_upgrade)
-        return
-    if args.verify_posting_workflow:
-        try:
-            from .posting_workflow_selftest import main as verify_posting_workflow
-        except ImportError:
-            from app.posting_workflow_selftest import main as verify_posting_workflow
-        verify_posting_workflow()
         return
     if args.verify_standalone_nurture:
         try:
@@ -92,7 +83,6 @@ def main() -> None:
         data_dir=settings.data_dir,
         bitbrowser_url=settings.bitbrowser_url,
         bitbrowser_api_key=settings.bitbrowser_api_key,
-        pexels_api_key=settings.pexels_api_key,
         session_hours=settings.session_hours,
         bind_host=args.host,
         bind_port=args.port,

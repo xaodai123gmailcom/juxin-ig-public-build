@@ -24,13 +24,18 @@ import { CoreSupervisor } from "./core-supervisor.js";
 import { writePrivateFileAtomically } from "./atomic-secure-store.js";
 import { CloudConfigurationController, readCloudConfiguration } from "./cloud-integration.js";
 import { provisionOpenAI } from "./provision-integrations.js";
-import { PexelsCredentialController, secureCredentialStorageAvailable } from "./pexels-integration.js";
+import { secureCredentialStorageAvailable } from "./secure-credential-storage.js";
 import { CoreSessionFence, assertDirectCoreResponse, coreFetchRedirectMode, coreRequestTimeoutMs, isAllowedCoreRequest, normalizeCoreMethod, resumeTokenFromBody, sessionTokenFromResponse, shouldClearSessionTokenAfterRequest } from "./core-request-policy.js";
 import { classifyRendererNavigation, isAllowedDevelopmentRendererUrl, normalizedExternalHttpsUrl, normalizedInstagramProfilePreviewUrl, normalizedInstagramPreviewNavigationUrl } from "./navigation-policy.js";
 
 import { EmbeddedBrowserHost } from "./embedded-browser.js";
 import { type SurfaceInput } from "./account-surface-policy.js";
 import { AccountSurfacePresenter } from "./account-surface-presenter.js";
+
+// Retired material-provider credentials must not reach any app-owned children.
+// Delete inherited values without reading, persisting or activating them.
+delete process.env.IGAC_PEXELS_API_KEY;
+delete process.env.PEXELS_API_KEY;
 
 const originalUserData = app.getPath("userData");
 const hasCollectorDatabase = (directory: string) => existsSync(join(directory, "data", "collector.sqlite3"));
@@ -203,8 +208,6 @@ function spawnCore() {
   const bitbrowserPort = configuredBitbrowserPort || readSecureValue("bitbrowser-port") || "54345";
   const bitbrowserApiKey = readSecureValue("bitbrowser-api-key") || "";
   const openaiApiKey = provisionOpenAI(readSecureValue);
-  const pexelsApiKey = secureCredentialStorageAvailable(safeStorage, process.platform)
-    ? readSecureValue("pexels-api-key") || "" : "";
   const cloud = readCloudConfiguration(() => readSecureValue("cloud-configuration-v1"), secureCredentialStorageAvailable(safeStorage, process.platform));
   const env = {
     ...process.env,
@@ -221,7 +224,6 @@ function spawnCore() {
     IGAC_BITBROWSER_URL: `http://127.0.0.1:${bitbrowserPort}`,
     IGAC_BITBROWSER_API_KEY: bitbrowserApiKey,
     OPENAI_API_KEY: openaiApiKey,
-    IGAC_PEXELS_API_KEY: pexelsApiKey,
     IGAC_CLOUD_ENABLED: cloud.enabled ? "1" : "0",
     IGAC_SUPABASE_URL: cloud.projectUrl,
     IGAC_SUPABASE_PUBLISHABLE_KEY: cloud.publishableKey,
@@ -231,7 +233,7 @@ function spawnCore() {
   const child = app.isPackaged
     ? spawn(join(process.resourcesPath, "backend", "collector_core", "collector_core.exe"), [], { env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     : spawn(python, ["-m", "backend.main"], { cwd: app.getAppPath(), env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-  for (const secret of [coreToken, embeddedBrowser.token, bitbrowserApiKey, openaiApiKey, pexelsApiKey, cloud.publishableKey]) rememberCoreSecret(secret);
+  for (const secret of [coreToken, embeddedBrowser.token, bitbrowserApiKey, openaiApiKey, cloud.publishableKey]) rememberCoreSecret(secret);
   const privateValues = corePrivateValues;
   captureCoreLog(child.stdout, "stdout", line => storageManagement.log(line), privateValues);
   captureCoreLog(child.stderr, "stderr", line => storageManagement.log(line), privateValues);
@@ -557,24 +559,6 @@ const coreSupervisor = new CoreSupervisor({
   log: (message, error) => {storageManagement.log(message);error === undefined ? console.error(message) : console.error(message, error)},
 });
 
-const pexelsCredentials = new PexelsCredentialController({
-  encryptionAvailable: () => secureCredentialStorageAvailable(safeStorage, process.platform),
-  writeEncrypted: value => writeSecureValue("pexels-api-key", value),
-  rememberSecret: rememberCoreSecret,
-  activate: async value => {
-    const response = await fetch(`${coreBaseUrl()}/api/internal/integrations/pexels`, {
-      method: "POST",
-      headers: {"x-startup-token": coreToken, "Content-Type": "application/json"},
-      body: JSON.stringify({pexels_api_key: value}),
-      signal: AbortSignal.timeout(5_000),
-      redirect: coreFetchRedirectMode,
-    });
-    assertDirectCoreResponse(response);
-    if (!response.ok) throw new Error("本机 Pexels 配置暂未生效");
-    return response.json();
-  },
-});
-
 const cloudConfiguration = new CloudConfigurationController({
   encryptionAvailable: () => secureCredentialStorageAvailable(safeStorage, process.platform),
   readEncrypted: () => readSecureValue("cloud-configuration-v1"),
@@ -592,19 +576,14 @@ const cloudConfiguration = new CloudConfigurationController({
   },
 });
 
-ipcMain.handle("core:configure", async (_event, input: { bitbrowserPort?: number; bitbrowserApiKey?: string; openaiApiKey?: string; pexelsApiKey?: string; cloud?: {enabled:boolean;projectUrl:string;publishableKey:string} }) => {
+ipcMain.handle("core:configure", async (_event, input: { bitbrowserPort?: number; bitbrowserApiKey?: string; openaiApiKey?: string; cloud?: {enabled:boolean;projectUrl:string;publishableKey:string} }) => {
   requireMainSender(_event);
   if (!input || typeof input !== 'object' || Array.isArray(input)
-      || Object.keys(input).some(key => !['bitbrowserPort', 'bitbrowserApiKey', 'openaiApiKey', 'pexelsApiKey', 'cloud'].includes(key)))
+      || Object.keys(input).some(key => !['bitbrowserPort', 'bitbrowserApiKey', 'openaiApiKey', 'cloud'].includes(key)))
     throw new Error("集成配置格式无效");
   if (input.cloud !== undefined) {
     if (Object.keys(input).length !== 1) throw new Error("云端配置必须单独保存");
     return cloudConfiguration.save(input.cloud);
-  }
-  if (input.pexelsApiKey !== undefined) {
-    if (input.bitbrowserPort !== undefined || input.bitbrowserApiKey !== undefined || input.openaiApiKey !== undefined)
-      throw new Error("请单独保存 Pexels 密钥，避免重启正在执行任务的 Core");
-    return pexelsCredentials.save(input.pexelsApiKey);
   }
   if (typeof input.bitbrowserPort !== 'number' || !Number.isInteger(input.bitbrowserPort) || input.bitbrowserPort < 1 || input.bitbrowserPort > 65535) throw new Error("BitBrowser Local API 端口无效");
   if ((input.bitbrowserApiKey !== undefined && typeof input.bitbrowserApiKey !== 'string')

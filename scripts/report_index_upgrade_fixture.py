@@ -14,7 +14,7 @@ OLD_TARGET_SQL = (f'CREATE INDEX {OLD_INDEX} ON split_completed_targets'
                   '(owner_user_id,julianday(completed_at) DESC,target_id)')
 START, END = '2026-10-03T00:00:00+08:00', '2026-10-04T00:00:00+08:00'
 NOW, OLD = '2026-10-03T06:00:00+00:00', '2026-09-01T06:00:00+00:00'
-EXPECTED = {'collection': 3, 'follow': 1, 'split': 3, 'added': 7, 'confirmed_posting': 1}
+EXPECTED = {'collection': 3, 'follow': 1, 'split': 3, 'added': 7}
 TABLES = (
     'instagram_accounts', 'instagram_username_aliases', 'global_seen',
     'global_seen_stats', 'global_seen_platform_stats', 'global_identity_owners',
@@ -68,7 +68,7 @@ def install_old_index(database, *, isolated_directory, owner_table='split_candid
 
 
 def seed(database, owner, *, isolated_directory):
-    """Add positive five-card evidence for a new, otherwise empty fixture owner."""
+    """Add positive four-card evidence for a new, otherwise empty fixture owner."""
     database = _isolated(database, isolated_directory)
     with closing(sqlite3.connect(database)) as c:
         c.execute('PRAGMA foreign_keys=ON')
@@ -99,11 +99,9 @@ def seed(database, owner, *, isolated_directory):
         c.execute("INSERT INTO action_attempts VALUES('r61-attempt','r61-campaign','r61-action',1,'confirmed',?,?,'{}')", (NOW, NOW))
         c.execute("INSERT INTO action_success_ledger VALUES(?,'follow','r61.follow','r61.follow','r61-campaign','r61-action','r61-attempt',?)", (owner, NOW))
         c.execute("INSERT INTO follow_monitor_rounds(owner_user_id,batch_id,profile_id,owner_username,actual_count,first_read_count,added_count,repeat_count,unfollow_count,checked_at) VALUES(?,'r61-round','r61-window','fixture',20,20,7,0,0,?)", (owner, NOW))
-        c.execute("INSERT INTO posting_receipts VALUES('r61-post',?,'r61-window','fixture','',?,'2026-10-03','{\"verification\":\"instagram_dialog\"}')", (owner, NOW))
-        # Pending posting holds are intentionally retained across startup and
-        # block another operation. No browser or network action can be launched.
-        c.execute("INSERT INTO posting_jobs(id,owner_user_id,request_key,theme,caption,profile_id,status,lease_token,created_at,updated_at) VALUES('r61-hold',?,'r61-hold','fixture','','r61-held-window','unknown','r61-fixture-lease',?,?)", (owner, NOW, NOW))
-        c.execute("INSERT INTO browser_operation_leases VALUES('r61-held-window',?,'posting','r61-hold','r61-fixture-lease',?,?,?)", (owner, NOW, NOW, '2099-01-01T00:00:00+00:00'))
+        # Window leases remain part of the index upgrade's independent oracle.
+        # Retired posting records are covered by the legacy archive fixture.
+        c.execute("INSERT INTO browser_operation_leases VALUES('r61-held-window',?,'collection','r61-task','r61-fixture-lease',?,?,?)", (owner, NOW, NOW, '2099-01-01T00:00:00+00:00'))
         c.commit()
     return {'start': START, 'end': END, 'totals': dict(EXPECTED)}
 

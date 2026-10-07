@@ -66,7 +66,7 @@ async def prepare_instagram_home(page,checkpoint=None):
         state=await page.evaluate(HOME_NOTICE)
         if state['state']=='ready':return handled
         if state['state'] in {'blocked','unknown'}:
-            raise ValidationError('首页提示需手动处理，尚未发帖：'+state['message'])
+            raise ValidationError('首页提示需手动处理，操作已停止：'+state['message'])
         await page.locator('[data-juxin-dismiss-notice="true"]').click(timeout=3000)
         handled.append(state['message']);await asyncio.sleep(.2)
     raise ValidationError('首页提示未关闭，请在窗口内处理后继续')

@@ -55,6 +55,6 @@ results. Synthetic fixtures must remain isolated from user data and live account
 
 Cloud is disabled until the user supplies and enables their own project and
 signs in. Translation requires a separately obtained, locally imported compatible
-userscript. Pexels requires a separately configured valid API credential.
+userscript. Posting and Pexels are removed. Legacy posting content requires verified recoverable archival before safe retirement.
 Unconfigured services must stay visibly unavailable. Configuration or proprietary
 scripts must never be added to the tracked build source.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { verifyRendererReleaseCopy, verifyRendererProductionRuntime } from '../renderer_release_contract.mjs';
+import { verifyRendererReleaseCopy, verifyRendererProductionRuntime, retiredPublishingMarkers } from '../renderer_release_contract.mjs';
 import { resolveConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 
@@ -96,5 +96,12 @@ for (const marker of ['部分列表显示最近', '前往设置', '界面 r94 / 
   test(`source and bundled renderer reject reintroducing retired shell text ${marker}`, () => {
     for (const phase of ['renderer source release copy', 'production capacity and safe cleanup copy'])
       assert.throws(() => verifyRendererReleaseCopy(currentCopy + '\n' + marker, phase), /contains retired shell marker/);
+  });
+}
+
+for (const marker of retiredPublishingMarkers) {
+  test(`source and bundled renderer reject retired publishing marker ${marker}`, () => {
+    for (const phase of ['renderer source release copy', 'production capacity and safe cleanup copy'])
+      assert.throws(() => verifyRendererReleaseCopy(currentCopy + '\n' + marker, phase), /contains retired publishing marker/);
   });
 }

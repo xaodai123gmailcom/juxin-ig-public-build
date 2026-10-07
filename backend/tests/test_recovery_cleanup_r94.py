@@ -10,7 +10,7 @@ from test_parallel_screening_worker import _Page, _connected_parent
 
 class RecoveryCleanupR94Tests(unittest.IsolatedAsyncioTestCase):
     async def test_late_page_factories_keep_transport_until_candidate_is_reclaimed(self):
-        for role in ('posting', 'recovery', 'screening'):
+        for role in ('account-home', 'recovery', 'screening'):
             for late in (False, True):
                 with self.subTest(role=role, timeout=late):
                     release, entered = asyncio.Event(), asyncio.Event()
@@ -30,7 +30,7 @@ class RecoveryCleanupR94Tests(unittest.IsolatedAsyncioTestCase):
                     driver = SimpleNamespace(stop=AsyncMock(side_effect=stop))
                     relay = SimpleNamespace(stop=Mock())
                     parent._playwright, parent._cdp_relay = driver, relay
-                    operation = (parent.open_posting_page() if role == 'posting' else
+                    operation = (parent.open_account_home_page() if role == 'account-home' else
                                  parent._recover_stalled_profile_page('target') if role == 'recovery' else
                                  parent.create_parallel_screening_worker())
                     opening = asyncio.create_task(operation)
@@ -134,11 +134,11 @@ class RecoveryCleanupR94Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((1, 1), (current.close_calls, old.close_calls))
         driver.stop.assert_awaited_once()
 
-    async def test_posting_page_cannot_publish_after_disconnect(self):
+    async def test_account_home_cannot_activate_after_disconnect(self):
         for phase in ('navigation', 'label'):
             with self.subTest(phase=phase):
                 entered, release = asyncio.Event(), asyncio.Event()
-                page = _Page('posting')
+                page = _Page('account-home')
                 page.is_closed = lambda: page.close_calls > 0
                 async def blocked(*_args, **_kwargs):
                     entered.set()
@@ -147,7 +147,7 @@ class RecoveryCleanupR94Tests(unittest.IsolatedAsyncioTestCase):
                 parent = _connected_parent(SimpleNamespace(new_page=AsyncMock(return_value=page)), _Page('source'))
                 if phase == 'label':
                     parent._label_task_page_best_effort = blocked
-                opening = asyncio.create_task(parent.open_posting_page())
+                opening = asyncio.create_task(parent.open_account_home_page())
                 try:
                     await asyncio.wait_for(entered.wait(), 1)
                     await parent.disconnect()
@@ -162,13 +162,13 @@ class RecoveryCleanupR94Tests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.gather(opening, return_exceptions=True)
                     await parent.disconnect()
 
-    async def test_posting_broken_adapter_never_navigates_or_closes_borrowed_source(self):
+    async def test_account_home_broken_adapter_never_navigates_or_closes_borrowed_source(self):
         source = _Page('operator')
         source.goto = AsyncMock()
         parent = _connected_parent(SimpleNamespace(new_page=AsyncMock(return_value=source)), source)
         try:
             with self.assertRaises(WorkerExecutionError):
-                await parent.open_posting_page()
+                await parent.open_account_home_page()
             source.goto.assert_not_awaited()
             self.assertEqual(0, source.close_calls)
             self.assertIs(parent.page, source)

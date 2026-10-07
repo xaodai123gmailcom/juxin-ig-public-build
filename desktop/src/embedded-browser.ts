@@ -19,7 +19,7 @@ import {accountViewport} from './account-viewport.js';
 import {webPageMenu,contextMessage} from './web-page-menu.js';
 import {whatsappColumnLayoutScript} from './whatsapp-layout.js';
 
-export type AccountPage = { view: WebContentsView; targetId: string; role?:'source'|'screening'|'task'; roleIndex?:number; openerId?: string; postingViewport?: Pick<Rectangle,'width'|'height'> };
+export type AccountPage = { view: WebContentsView; targetId: string; role?:'source'|'screening'|'task'; roleIndex?:number; openerId?: string };
 type PageDisplayState = 'blank'|'loading'|'ready'|'load_failed'|'crashed'|'unresponsive';
 type PageDisplay = { display_state:PageDisplayState;display_message:string };
 import {chatTranslationPage} from './chat-translation-page.js';
@@ -157,7 +157,6 @@ export class EmbeddedBrowserHost {
           ws.terminate();return;
         }
         const client = new AccountCdpConnection(this, profile, ws);
-        if(!profile.clients.size)this.resetTaskPageViewports(profile);
         profile.clients.add(client);
         if(this.visible?.profile===profile.id){this.pageMenuEpoch++;this.pageMenu?.closePopup();this.pageMenu=undefined}
         for(const page of profile.pages.values())this.columnReady.delete(page.view.webContents);
@@ -165,7 +164,7 @@ export class EmbeddedBrowserHost {
         ws.on('close', () => {
           // A disconnected socket is not proof that its CDP/cookie work has
           // finished. Keep the window occupied until real cleanup settles.
-          void client.dispose().then(()=>{profile.clients.delete(client);if(!profile.clients.size)this.resetTaskPageViewports(profile)},error=>this.recordConnectionFailure(profile,error));
+          void client.dispose().then(()=>{profile.clients.delete(client)},error=>this.recordConnectionFailure(profile,error));
         });
         ws.resume();
       });
@@ -203,7 +202,7 @@ export class EmbeddedBrowserHost {
       const selected=p.pages.get(p.selected||'');
       const page=(selected&&isInstagram(selected)?selected:pages.find(isInstagram))||pages.find(page=>page.view.webContents.getURL()==='about:blank')||await this.newPage(p,'about:blank');
       if(p.closed||p.clients.size)throw new Error('窗口或任务状态已变化');
-      for(const idle of pages){idle.role=undefined;idle.roleIndex=undefined;delete idle.postingViewport}
+      for(const idle of pages){idle.role=undefined;idle.roleIndex=undefined}
       const status=this.pageDisplayStatus(page);
       if(!isInstagram(page)||['load_failed','crashed','unresponsive'].includes(status.display_state)){
         this.pageDisplay.set(page.view.webContents,{display_state:'loading',display_message:'正在加载 Instagram…'});
@@ -257,34 +256,15 @@ export class EmbeddedBrowserHost {
     if(method==='label-task-page'){
       const p=this.profiles.get(body.profile),page=p?.pages.get(body.target);
       if(!p||p.closed||!page||page.view.webContents.isDestroyed()||!['source','screening','task'].includes(body.role))throw new Error('任务页面无效');
-      if(body.viewport_mode!==undefined&&(body.viewport_mode!=='posting'||body.role!=='task'||!p.clients.size))throw new Error('发帖页面尺寸请求无效');
-      const previousViewport=page.postingViewport;
-      if(body.role!=='task')delete page.postingViewport;
-      if(body.viewport_mode==='posting'&&!page.postingViewport){
-        // A collector keeps its long-standing 1280x900 coordinates. A new
-        // posting composer instead snapshots the actual bounded pane once,
-        // before its controls are used; later watch/resize cannot move them.
-        const win=this.window(),pane=win&&!win.isDestroyed()?this.panes.get(win):undefined;
-        const b=this.workspaceBounds&&pane?pane.getBounds():undefined;
-        page.postingViewport=b&&Number.isInteger(b.width)&&Number.isInteger(b.height)&&b.width>=100&&b.height>=100
-          ?{width:b.width,height:b.height}:{width:1280,height:720};
-      }
+      if(body.viewport_mode!==undefined)throw new Error('任务页面尺寸模式不受支持');
       if(body.role==='screening'&&Number.isInteger(body.slot)&&body.slot>=1&&body.slot<=3){
         // Replacement pages inherit the same slot, hiding the retained old page
         // from the task tabs while its owner finishes recovery and cleanup.
         for(const other of p.pages.values())if(other!==page&&other.role==='screening'&&other.roleIndex===body.slot){other.role=undefined;other.roleIndex=undefined}
         page.role='screening';page.roleIndex=body.slot;
       }else if(page.role!==body.role){page.role=body.role;const used=new Set([...p.pages.values()].filter(x=>x!==page&&x.role===body.role).map(x=>x.roleIndex));let index=1;while(used.has(index))index++;page.roleIndex=index;}
-      // Source and single-task labels name the current worker page. A fresh
-      // posting tab replaces the initial connection tab's label, but never
-      // closes or navigates that retained page or changes its manual selection.
-      let retiredViewport=false;
-      if(body.role==='source'||body.role==='task')for(const other of p.pages.values())if(other!==page&&other.role===body.role){other.role=undefined;other.roleIndex=undefined;if(other.postingViewport){delete other.postingViewport;retiredViewport=true}}
-      if(retiredViewport||page.postingViewport!==previousViewport){const win=this.window();if(win&&!win.isDestroyed())this.layoutPane(win)}
-      // Wait for this target's metric request if its renderer is ready. All
-      // label writes are synchronous above: a late completion cannot restore
-      // posting metadata after disconnect, replacement or manual reopening.
-      if(body.viewport_mode==='posting')await this.sizePageViewport(page.view,page.postingViewport);
+      // Relabel the current worker target without closing or selecting siblings.
+      if(body.role==='source'||body.role==='task')for(const other of p.pages.values())if(other!==page&&other.role===body.role){other.role=undefined;other.roleIndex=undefined}
       return {labelled:true};
     }
     if(method==='watch-profile'){
@@ -746,9 +726,6 @@ export class EmbeddedBrowserHost {
     this.workspaceBounds = bounds;
     const win = this.window(); if (win && !win.isDestroyed()) this.layoutPane(win);
   }
-  private resetTaskPageViewports(p: EmbeddedProfile) {
-    for(const page of p.pages.values())delete page.postingViewport;
-  }
   private layoutPane(win: BrowserWindow) {
     const pane = this.panes.get(win); if (!pane) return;
     const [width,height] = win.getContentSize();
@@ -767,7 +744,7 @@ export class EmbeddedBrowserHost {
       // Task and active dimensions are already known; avoid a native getter
       // for every page on every permission heartbeat or sidebar resize.
       if(!task&&!active)continue;
-      const desired=accountViewport(task,active,bounds,bounds,page.postingViewport);
+      const desired=accountViewport(task,active,bounds,bounds);
       this.setNativeBounds(view,desired);
       void this.sizePageViewport(view,desired).catch(() => {});
     }

@@ -13,7 +13,7 @@ def validate_upgrade(proof, executable):
         if proof.get(key)!=c[key]:raise RuntimeError('Installed upgrade baseline mismatch: '+key)
     for key in ('nonce','manifest_sha256','input_database_sha256'):
         if not re.fullmatch('[a-f0-9]{64}',str(proof.get(key,''))):raise RuntimeError('Installed upgrade input binding missing: '+key)
-    for key,value in (('network_attempts',0),('activity_attempts',0),('synthetic_open_admissions',3)):
+    for key,value in (('network_attempts',0),('activity_attempts',0),('synthetic_open_admissions',4)):
         if type(proof.get(key)) is not int or proof[key]!=value:raise RuntimeError('Unexpected installed upgrade effect: '+key)
     for key in ('seed_pid','seed_completed_ns','opened_ns','seed_completed_perf_ns','opened_perf_ns'):
         if type(proof.get(key)) is not int or proof[key]<=0:raise RuntimeError('Installed upgrade process chronology missing')
@@ -31,8 +31,8 @@ def validate_upgrade(proof, executable):
     transition=proof.get('startup_action_transition',{})
     if transition.get('before')!='queued' or transition.get('after')!='paused' or type(transition.get('version_before')) is not int or transition['version_before']!=1 or type(transition.get('version_after')) is not int or transition['version_after']!=2 or not re.fullmatch('[a-f0-9]{64}',str(transition.get('after_sha256',''))):
         raise RuntimeError('Installed upgrade expected startup transition missing')
-    if proof.get('queued_blockers_before_startup')!={'queued_collection':'collection','queued_studio':'studio','queued_monitor':'monitor','queued_action':'action','prepared_posting':'posting'}:
-        raise RuntimeError('Installed upgrade queued/prepared blockers not proved')
+    if proof.get('queued_blockers_before_startup')!={'queued_collection':'collection','queued_studio':'studio','queued_monitor':'monitor','queued_action':'action'}:
+        raise RuntimeError('Installed upgrade queued retained-workflow blockers not proved')
     cases=proof.get('cases',{})
     if set(cases)!=set(c['case_outcomes']):raise RuntimeError('Installed upgrade cases are missing or unexpected')
     ids=[]
@@ -51,6 +51,6 @@ def validate_upgrade(proof, executable):
     for name,case in admission.items():
         if set(case)!=set(c['admission_fields']) or any(case[k] is not True for k in c['admission_fields'] if k!='new_job_id') or not case.get('new_job_id') or case['new_job_id'] in ids:raise RuntimeError('Installed upgrade new task/open evidence invalid: '+name)
         new.append(case['new_job_id'])
-    if len(set(new))!=3:raise RuntimeError('Installed upgrade reused a new job')
+    if len(set(new))!=4:raise RuntimeError('Installed upgrade reused a new job')
     return proof
 

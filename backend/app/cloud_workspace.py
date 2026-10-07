@@ -85,7 +85,12 @@ def export_workspace(db,owner,data_dir):
     tables={}
     with db.read() as c:
         c.execute('BEGIN')
-        for table in ROOT_TABLES:tables[table]=[dict(r) for r in c.execute(f'SELECT * FROM "{table}" WHERE owner_user_id=?',(owner,))]
+        for table in ROOT_TABLES:
+            if table == 'studio_assets':
+                tables[table] = []
+            else:
+                scope = " AND kind='nurture'" if table in {'studio_jobs','studio_templates'} else ''
+                tables[table]=[dict(r) for r in c.execute(f'SELECT * FROM "{table}" WHERE owner_user_id=?'+scope,(owner,))]
         tables['workbench_identity_claims']=[dict(r) for r in c.execute('SELECT * FROM workbench_identity_claims WHERE claimed_by_user_id=?',(owner,))]
         for table,(fk,parent) in CHILD_TABLES.items():
             # Derived by candidate triggers on restore; never replay their totals.
@@ -103,15 +108,6 @@ def export_workspace(db,owner,data_dir):
         tables['instagram_accounts']=_select_ids(c,'instagram_accounts','id',ids)
         for table in ('instagram_username_aliases','global_seen'):tables[table]=_select_ids(c,table,'account_id',ids)
     assets={};root=Path(data_dir).resolve()
-    for row in tables['studio_assets']:
-        path=Path(row['path']).resolve()
-        # A cloud backup may only read managed media, never a supplied arbitrary path.
-        if not path.is_relative_to(root):row['path']='';continue
-        if not path.is_file():raise ValidationError('备份素材缺失，本次同步已停止，已有云端备份保持不变')
-        if path.is_file():
-            if path.stat().st_size>32*1024*1024:raise ValidationError('单个素材超过 32 MB，请先移除大素材后同步')
-            assets[row['id']]=base64.b64encode(path.read_bytes()).decode()
-        row['path']=''
     for rows in tables.values():rows.sort(key=lambda r:json.dumps(r,sort_keys=True,ensure_ascii=False))
     raw=json.dumps({'format':1,'schema':23,'owner':owner,'tables':tables,'assets':assets},sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
     if len(raw)>MAX_RAW:raise ValidationError('工作区超过当前云端备份上限，尚未上传任何数据')
@@ -190,14 +186,70 @@ def _validate_workspace_relations(c, tables):
                 raise ValidationError('备份中的任务与目标归属不一致，未恢复数据')
 
 
+def _archive_retired_cloud_content(db, payload, data):
+    """Keep the original verified download locally before excluding retired content.
+
+    A digest-named file is immutable. Existing bytes are verified rather than
+    overwritten; failure leaves the active workspace transaction untouched.
+    The archive is never exported by the owner-scoped cloud table allowlist.
+    """
+    tables=data['tables']
+    retired = bool(tables['studio_assets'] or data.get('assets') or any(
+        row.get('kind') != 'nurture' for table in ('studio_jobs','studio_templates') for row in tables[table]))
+    if not retired:return
+    from .posting_retirement import _archive_location, _reject_symlinks, _sync_dir
+    data_root,archive_root,_=_archive_location(db)
+    root=archive_root/'cloud-snapshots'
+    _reject_symlinks(root)
+    root.mkdir(mode=0o700,exist_ok=True)
+    raw=json.dumps(payload,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
+    digest=hashlib.sha256(raw).hexdigest()
+    path=root/(digest+'.json')
+    _reject_symlinks(path)
+    if not path.exists():
+        fd,temporary=tempfile.mkstemp(prefix='.archive-',dir=root)
+        try:
+            with os.fdopen(fd,'wb') as out:
+                out.write(raw);out.flush();os.fsync(out.fileno())
+            if Path(temporary).read_bytes()!=raw:raise ValidationError('历史备份归档校验失败，未恢复数据')
+            os.replace(temporary,path)
+            _sync_dir(root)
+            _sync_dir(archive_root)
+            _sync_dir(data_root)
+        finally:
+            if os.path.exists(temporary):os.unlink(temporary)
+    if path.read_bytes()!=raw or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+        raise ValidationError('历史备份归档校验失败，未恢复数据')
+    # Decode the read-back file too, proving embedded media and original table
+    # records can be recovered using the normal backup integrity contract.
+    if decode_workspace(json.loads(path.read_bytes()))!=data:
+        raise ValidationError('历史备份归档内容校验失败，未恢复数据')
+    tables['studio_assets']=[]
+    data['assets']={}
+    for table in ('studio_jobs','studio_templates'):
+        tables[table]=[row for row in tables[table] if row.get('kind')=='nurture']
+
+
 def import_workspace(db,owner,data_dir,payload,*,check_active=lambda:None):
     check_active()
     data=decode_workspace(payload);tables=data['tables'];source=data['owner']
     with db.read() as c:
         _validate_workspace_relations(c,tables)
+    for records in tables.values():
+        for row in records:
+            for key in ('owner_user_id','claimed_by_user_id'):
+                if key in row and row[key]!=source:raise ValidationError('备份包含其他用户的数据，拒绝恢复')
     # All uploaded fields are validated against a local allowlist and local schema.
     with db.write() as c:
+        if c.execute('SELECT 1 FROM browser_operation_leases WHERE owner_user_id=? LIMIT 1',(owner,)).fetchone():
+            raise ConflictError('窗口仍由任务持有，不能恢复覆盖工作区')
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone() and c.execute('SELECT 1 FROM posting_jobs WHERE owner_user_id=? LIMIT 1',(owner,)).fetchone():
+            raise ConflictError('历史窗口状态仍待核验，不能恢复覆盖工作区')
         if not workspace_is_empty(c,owner):raise ConflictError('本机已有业务数据；为保留原记录，不会用云端备份覆盖。请在新的本机账号中登录此云端账号恢复')
+        from .posting_retirement import PostingRetirementError
+        try:_archive_retired_cloud_content(db,payload,data)
+        except (PostingRetirementError,OSError) as exc:
+            raise ValidationError('历史备份归档校验失败，未恢复数据') from exc
         c.execute('PRAGMA defer_foreign_keys=ON')
         next_serial=c.execute('SELECT COALESCE(max(serial),0) FROM native_browser_profiles').fetchone()[0]
         for table in TABLES:
@@ -227,11 +279,10 @@ def import_workspace(db,owner,data_dir,payload,*,check_active=lambda:None):
                     uuid.UUID(row['id'][7:]);next_serial+=1;row['serial']=next_serial
                     from .native_browser import validate_proxy
                     row['proxy_server']=validate_proxy(row['proxy_server'])
-                if table=='studio_assets':row['path']=''
                 # Nothing restored from another computer is permitted to auto-execute.
                 if table=='studio_jobs' and row['status'] not in {'completed','cancelled','failed','needs_review'}:
                     row['status']='needs_review' if row['inflight'] else 'paused'
-                    row['message']='从云端恢复，请核对素材及窗口登录后手动继续'
+                    row['message']='从云端恢复，请核对窗口登录后手动继续'
                 if table in {'tasks','action_campaigns'} and row['status'] in {'RUNNING','PAUSING','QUEUED','RECOVERING','running','queued','pausing','waiting_network','recoverable'}:row['status']='paused'
                 if table=='task_targets' and row['status'] in {'running','waiting_network'}:
                     row['status']='recoverable';row['current_window_id']=None;row['last_error']='从云端恢复，请手动继续'
@@ -266,29 +317,8 @@ def import_workspace(db,owner,data_dir,payload,*,check_active=lambda:None):
         rebuild_workbench_aggregates(c)
         rebuild_workbench_progress_aggregates(c)
         if c.execute('PRAGMA foreign_key_check').fetchone():raise ValidationError('备份关联校验失败，恢复已回滚')
-        # Store material in app-managed immutable files; no path from cloud is used.
-        root=Path(data_dir)/'cloud-media'/owner;root.mkdir(parents=True,exist_ok=True)
-        asset_rows={r['id']:r for r in tables['studio_assets']}
-        for ident,encoded in data.get('assets',{}).items():
-            check_active()
-            if ident not in asset_rows:raise ValidationError('备份素材引用不正确')
-            try:content=base64.b64decode(encoded,validate=True)
-            except ValueError:raise ValidationError('素材校验失败') from None
-            if len(content)>32*1024*1024:raise ValidationError('素材过大')
-            suffix='.mp4' if 'video' in str(asset_rows[ident]['media_type']) else '.jpg'
-            path=root/(hashlib.sha256(content).hexdigest()+suffix)
-            expected=hashlib.sha256(content).hexdigest()
-            valid=path.is_file() and path.stat().st_size==len(content) and hashlib.sha256(path.read_bytes()).hexdigest()==expected
-            if not valid:
-                fd,temporary=tempfile.mkstemp(prefix='.restore-',dir=root)
-                try:
-                    with os.fdopen(fd,'wb') as out:
-                        out.write(content);out.flush();os.fsync(out.fileno())
-                    os.replace(temporary,path)
-                finally:
-                    if os.path.exists(temporary):os.unlink(temporary)
-            c.execute('UPDATE studio_assets SET path=? WHERE id=? AND owner_user_id=?',(str(path),ident,owner))
         check_active()
+
 
 
 class CloudWorkspace:

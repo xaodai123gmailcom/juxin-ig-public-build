@@ -8,14 +8,13 @@ import { PrivateFollowReviewWorkspace } from "./private-follow-review-workspace"
 import "./reports-workspace.css";
 
 type Period = "day" | "week" | "month";
-const metrics = ["follow", "greet", "split", "added", "posting", "collection", "check", "nurture", "approved", "confirmed_posting"] as const;
+const metrics = ["follow", "greet", "split", "added", "collection", "check", "nurture", "approved"] as const;
 type Metric = typeof metrics[number];
-const labels: Record<Metric, string> = { follow:"私密点关注", greet:"公开打招呼", split:"分裂数量", posting:"历史发帖（原功能）", confirmed_posting:"新队列确认发帖", added:"新增数量", collection:"采集账号", check:"关注检查", nurture:"养号完成", approved:"审核合格" };
+const labels: Record<Metric, string> = { follow:"私密点关注", greet:"公开打招呼", split:"分裂数量", added:"新增数量", collection:"采集账号", check:"关注检查", nurture:"养号完成", approved:"审核合格" };
 type Row = {profile_id:string;window_name:string;username:string;instagram_user_id:string} & Record<Metric,number>;
 const summaryMetrics = ["collection", "follow", "split", "added"] as const;
-const summaryCards = [...summaryMetrics, "confirmed_posting"] as const;
-const postingSummaryHint = "仅统计当前发帖队列已确认的发布成功回执；结果待核验和历史人工确认不计入";
-type Summary = {start:string;end:string;totals:Record<typeof summaryMetrics[number],number> & {confirmed_posting?:number}};
+const summaryCards = [...summaryMetrics] as const;
+type Summary = {start:string;end:string;totals:Record<typeof summaryMetrics[number],number>};
 type Report = Summary & {totals:Record<Metric,number>;rows:Row[];unattributed:number};
 type Totals = {total_collected:number;today_collected:number;global_dedupe:number;approved:number};
 const n = (value:number) => new Intl.NumberFormat("zh-CN").format(value);
@@ -180,15 +179,14 @@ function ActivityReports({navigationRevision}: {navigationRevision: {current: nu
     {error && <div className="formal-error-banner" role="alert">{error}</div>}
     {exportError && <div className="formal-error-banner" role="alert">CSV 导出失败：{exportError}</div>}
     <div className="report-summary" aria-busy={loading}>{summaryCards.map(key => {
-      const posting = key === "confirmed_posting";
       const measured = currentReport?.totals[key];
       const known = typeof measured === "number" && Number.isSafeInteger(measured) && measured >= 0;
       const value = known ? n(measured) : loading ? "读取中" : "—";
-      const label = posting ? "发帖数量" : key === "collection" ? "采集总数" : key === "added" || key === "split" ? labels[key] : `${labels[key]}成功数`;
-      return <div className={`report-card report-${posting ? "posting" : key}`} key={key} role={posting ? "group" : undefined} aria-label={posting ? `发帖数量：${postingSummaryHint}` : undefined} title={posting ? postingSummaryHint : undefined}>
+      const label = key === "collection" ? "采集总数" : key === "added" || key === "split" ? labels[key] : `${labels[key]}成功数`;
+      return <div className={`report-card report-${key}`} key={key}>
         <span>{label}</span>
-        <strong title={posting ? postingSummaryHint : value} style={{"--report-value-length": Math.max(value.length, 6)} as CSSProperties}>{value}</strong>
-        <small>{posting ? known ? "次确认发布" : "记录不可用" : key === "added" ? "次新增" : key === "split" ? "次完成" : "个账号"}</small>
+        <strong title={value} style={{"--report-value-length": Math.max(value.length, 6)} as CSSProperties}>{value}</strong>
+        <small>{key === "added" ? "次新增" : key === "split" ? "次完成" : "个账号"}</small>
       </div>;
     })}</div>
   </>;

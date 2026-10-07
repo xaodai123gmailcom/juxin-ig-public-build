@@ -1,3 +1,4 @@
+import {accountWindowReconciliationEligible,accountWindowReconciliationReady} from '../src/account-window-reconciliation.ts';
 import {shareUnchangedJson} from '../src/snapshot-sharing.ts';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -24,7 +25,7 @@ function workspace(initial,sourceSnapshot,client={},onChanged){
  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
  const props={snapshot:sourceSnapshot,onChanged};
  const memoize=(fn,deps)=>{const slot=mi++;if(!same(memo[slot]?.deps,deps))memo[slot]={value:fn(),deps};return memo[slot].value};
- const render=runInNewContext(stripTypeScriptTypes(code)+'\n() => AccountWorkspace(props)',{
+ const render=runInNewContext(stripTypeScriptTypes(code)+'\n() => AccountWorkspace(props)',{accountWindowReconciliationEligible,accountWindowReconciliationReady,
   props,createViewSnapshotReader,shareUnchangedJson,
   useState(value){const slot=si++;if(!(slot in states))states[slot]=names[slot]==='data'?initial:typeof value==='function'?value():value;return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next}]},
   useRef(value){return refs[ri++]||=( {current:value})},useMemo:memoize,useCallback:(fn,deps)=>memoize(()=>fn,deps),

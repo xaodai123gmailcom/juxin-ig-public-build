@@ -1,3 +1,4 @@
+import {accountWindowReconciliationEligible, accountWindowReconciliationReady, type AccountWindowReconciliationLock} from './account-window-reconciliation';
 import {ChatTranslationControls} from './chat-translation';
 import {createPortal} from 'react-dom';
 import {UnreadBadge,useAccountUnread} from './account-unread';
@@ -20,7 +21,7 @@ type AccountData = {
   restore?:{restoring:boolean;failed:string[]};windows?:Array<Partial<CoreBitBrowserWindow>&{id:string;opened:boolean}>;inventory_stale?:boolean;platforms?:Array<{id:string;label:string;hint?:string}>;unavailable_platforms?:Array<{id:string;label:string;hint:string}>;plans: Plan[]; events: Array<{name:string;action:string;created_at:string}>;
   last_dm: Record<string,{count:number;checked_at:string|null}>;
   last_following: Record<string,{username:string;count:number;checked_at:string|null}>;
-  locks: Record<string,{operation_type:string;state?:string;cleanup_required?:boolean}>; cloud_sync: string;
+  locks: Record<string,AccountWindowReconciliationLock & {cleanup_required?:boolean}>; cloud_sync: string;
 };
 type Form = {custom_url:string;platform:string;native:boolean;proxy_server:string;id:string;revision:number;name:string;username:string;group:string;profile_id:string;notes:string;language:string;timezone:string;proxy_note:string};
 const empty:Form={custom_url:'',platform:'instagram',native:true,proxy_server:'',id:'',revision:0,name:'',username:'',group:'',profile_id:'',notes:'',language:'简体中文',timezone:'跟随窗口',proxy_note:''};
@@ -121,7 +122,7 @@ export function AccountWorkspace({snapshot:sourceSnapshot,onChanged}:{snapshot:C
       }
     }
     if(pending.current)return false;pending.current=true;setBusy(true);setError('');setNote('');
-    try {const result=await getCollectorCoreClient().accountCommand(body);if((['save','save_with_cookies','batch_create'].includes(String(body.action)))&&typeof result.id==='string'){setSelectedId(result.id);if(body.action==='save_with_cookies')setForm(f=>f?{...f,id:result.id as string,revision:Number(result.revision)}:f)}if(result.cookie_failed){setCookieRetry(true);setError(String(result.message||'窗口已保存，登录导入未完成，可重试导入。'));return false}if(result.page_loaded===false){setError(String(result.message||'网页未能加载，请检查网络后刷新或重新打开窗口。'));return false}setNote(String(result.message||message));return true}
+    try {const result=await getCollectorCoreClient().accountCommand(body);if(action==='reconcile_window_state'&&!live.current)return false;if(action==='reconcile_window_state'&&result.reconciled!==true)throw new Error('未能确认窗口已关闭，占用状态仍保留');if((['save','save_with_cookies','batch_create'].includes(String(body.action)))&&typeof result.id==='string'){setSelectedId(result.id);if(body.action==='save_with_cookies')setForm(f=>f?{...f,id:result.id as string,revision:Number(result.revision)}:f)}if(result.cookie_failed){setCookieRetry(true);setError(String(result.message||'窗口已保存，登录导入未完成，可重试导入。'));return false}if(result.page_loaded===false){setError(String(result.message||'网页未能加载，请检查网络后刷新或重新打开窗口。'));return false}setNote(String(result.message||message));return true}
     catch(e){setError(String(e));return false}
     finally {pending.current=false;if(live.current){setBusy(false);void Promise.allSettled([refresh(true),unread.refresh(),onChanged?.()])}}
   }
@@ -199,6 +200,13 @@ export function AccountWorkspace({snapshot:sourceSnapshot,onChanged}:{snapshot:C
   useEffect(()=>{setTranslationOpen(false)},[translationId]);
   const selectedWindow=selected?windowsById.get(selected.profile_id):undefined;
   const locked=Boolean(selected&&isLocked(selected.profile_id));
+  const reconciliationLock=selected?data?.locks[selected.profile_id]:undefined;
+  const reconciliationEligible=accountWindowReconciliationEligible(reconciliationLock);
+  const reconciliationReady=accountWindowReconciliationReady(reconciliationLock,selected?windowsById.get(selected.profile_id):undefined,Boolean(readError||data?.inventory_stale));
+  async function reconcileWindowState() {
+    if(!selected||!reconciliationReady||pending.current||busy||windowOperations.current.has(selected.id))return;
+    await command({action:'reconcile_window_state',id:selected.id},'窗口已核验关闭，占用状态已更新');
+  }
   const disabled=busy||locked||!selected||Boolean(selected&&pendingWindows[selected.id]);
   const status=(p:Plan)=>pendingWindows[p.id]?({open:'正在打开',close:'正在关闭',refresh:'正在刷新',notes:'正在保存'}[pendingWindows[p.id]]||'正在处理'):data?.locks[p.profile_id]?.cleanup_required||windowsById.get(p.profile_id)?.lock_state==='cleanup_pending'?'养号清理待核验':controlLocked(p.profile_id)?'任务占用':!p.profile_id?'待绑定':windowsById.get(p.profile_id)?.window_state==='unknown'?'状态更新中':windowsById.get(p.profile_id)?.opened?'已打开':'已关闭';
   const opened=(p:Plan)=>Boolean(windowsById.get(p.profile_id)?.opened);
@@ -284,6 +292,7 @@ export function AccountWorkspace({snapshot:sourceSnapshot,onChanged}:{snapshot:C
       {plans.some(p=>data?.locks[p.profile_id]?.cleanup_required||windowsById.get(p.profile_id)?.lock_state==='cleanup_pending')&&<div className="formal-error-banner" role="status">有窗口的养号清理待核验，请前往“养号 → 异常任务”，点击“核验窗口清理”。历史记录和登录资料会保留。</div>}
       {selected&&unread.snapshot.windows[selected.profile_id]?.status==='storage_error'&&<div className="formal-error-banner" role="alert"><span>WhatsApp 登录初始化失败。请检查并导出本次启动错误；重新建立环境可保留旧资料。</span><button className="formal-button compact" disabled={disabled} onClick={()=>{setError('');setResetTarget(selected)}}>重新建立登录环境</button></div>}
       {selected&&isWhatsApp(selected)&&<div className="account-batch-toolbar"><button className="formal-button compact" disabled={disabled||!selectedWindow?.opened} onClick={()=>void checkLogin(selected)}>检查登录环境</button>{loginReport&&<button className="formal-button compact" onClick={()=>exportLoginReport()}>导出检查结果</button>}</div>}
+      {selected&&reconciliationEligible&&<div className="account-note account-reconciliation" role="status"><span>请先确认“{selected.name}”已正常关闭。此操作仅核验窗口状态，不会关闭窗口或重启任务。</span><button className="formal-button compact" disabled={busy||!reconciliationReady||Boolean(pendingWindows[selected.id])} onClick={()=>void reconcileWindowState()}>核验已关闭窗口</button></div>}
       {note&&<div className="account-note" role="status">{note}<button aria-label="关闭提示" onClick={()=>setNote('')}><X size={15}/></button></div>}
       {batchResults.length>0&&<details className="account-batch-results"><summary>批量结果 · {batchResults.length} 个窗口</summary>{batchResults.map((r,i)=><p key={i}><strong>{r.name}</strong> · {r.message}</p>)}</details>}
             <AccountBrowserSurface taskWatch id={selected?.id||''} native={Boolean(selected?.native)} opened={Boolean(selectedWindow?.opened)} locked={locked} visible={!translationOpen&&batchNotes===null&&!creation&&!form&&!utility&&!resetTarget&&!deleteTarget&&!menu} onOpen={()=>selected&&void open(selected)} disabled={disabled||!selectedWindow}/>

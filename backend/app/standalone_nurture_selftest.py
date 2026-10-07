@@ -197,8 +197,6 @@ class Fixture:
         self.started = asyncio.Event()
         self.release = None
         self.manager = StudioManager(self.service, self)
-        # Never use a real Desktop folder, even while constructing media helpers.
-        self.manager.media.files.root = directory / (name + '-synthetic-media')
     def job(self, profile):
         with self.read_evidence() as connection:
             row=connection.execute('SELECT * FROM studio_jobs WHERE profile_id=? ORDER BY rowid DESC LIMIT 1',(profile,)).fetchone()
@@ -241,7 +239,7 @@ class Fixture:
                 fixture.started.set()
                 if fixture.release is not None:
                     await fixture.release.wait()
-            async def open_posting_page(self):
+            async def open_account_home_page(self):
                 fixture.assert_owned(self.profile)
                 self.page.events.append('open-owned-tab')
             async def _guard(self):
@@ -299,7 +297,6 @@ class Fixture:
         self.database.initialize()
         self.service = CoreService(self.database)
         self.manager = StudioManager(self.service, self)
-        self.manager.media.files.root = self.path.parent / 'synthetic-reopened-media'
 
 
 async def selection_case(directory):
@@ -633,11 +630,6 @@ async def run_selftest():
         for name in ('create_connection', 'getaddrinfo', 'gethostbyname', 'gethostbyname_ex'):
             guard.enter_context(patch.object(socket, name, forbidden))
         directory = Path(temporary)
-        # Do not resolve the user's redirected Windows Desktop or load any
-        # configured media credentials, including on deliberately failed jobs.
-        guard.enter_context(patch(__package__ + '.studio_files.desktop_root', return_value=directory / 'synthetic-desktop'))
-        guard.enter_context(patch(__package__ + '.studio_media.StudioMedia.pexels_key', return_value=''))
-        guard.enter_context(patch(__package__ + '.studio_media.StudioMedia.ai_key', return_value=''))
         cases={}
         for name,operation in (('selection_and_fixed_policy',selection_case),
             ('completed_history',completed_case),('unknown_own_profile',unknown_owner_case),

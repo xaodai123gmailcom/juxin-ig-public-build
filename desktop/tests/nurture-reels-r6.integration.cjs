@@ -73,7 +73,7 @@ async function runInWindow({win,host,lifecycle}){
     await input(0,5);await input(1,-1);assert.equal(await evaluate(`${button('启动养号')}.disabled`),true);
     await input(1,0);
     // Reservation arriving after selection removes that selection before start.
-    await evaluate("nurtureFixture.state.jobs.push({id:'late-reservation',kind:'posting',profile_id:'free-b',status:'queued',created_at:'2026-10-02T18:00:00Z',result:{}});nurtureFixture.poll();true");
+    await evaluate("nurtureFixture.state.jobs.push({id:'late-reservation',kind:'nurture',profile_id:'free-b',status:'queued',created_at:'2026-10-02T18:00:00Z',result:{}});nurtureFixture.poll();true");
     await wait("document.querySelector('[data-window-id=free-b] input').disabled&&!document.querySelector('[data-window-id=free-b] input').checked",'late pending reservation removed');
     // Read failures preserve prior real values but disable new work, then recover.
     await evaluate('nurtureFixture.failSnapshot=true;nurtureFixture.poll();true');

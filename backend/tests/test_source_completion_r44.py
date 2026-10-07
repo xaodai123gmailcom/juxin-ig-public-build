@@ -255,7 +255,7 @@ class SourceScrollerDOMR44Tests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(runtime.stop)
         executable = os.environ.get("IGAC_TEST_CHROMIUM_EXECUTABLE", runtime.chromium.executable_path)
         if not Path(executable).is_file() and os.name != "nt":
-            if os.environ.get("IGAC_REQUIRE_POSTING_BROWSER") == "1":
+            if os.environ.get("IGAC_REQUIRE_COLLECTION_BROWSER") == "1":
                 self.fail("Required Chromium runtime is missing")
             self.skipTest("Chromium is not installed in this non-Windows environment")
         browser = await runtime.chromium.launch(executable_path=executable)

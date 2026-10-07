@@ -32,14 +32,15 @@ def timed(method, db, owner, **kwargs):
                    'totals': value['totals'], 'rows': len(value.get('rows', []))}
 
 def assert_legacy_report_parity(before, detail):
-    """Only the new native receipt metric is outside the historical contract."""
-    assert detail['totals'].get('confirmed_posting') == 0, detail['totals']
-    old_totals={key:value for key,value in detail['totals'].items() if key!='confirmed_posting'}
-    assert before['totals'] == old_totals, (before['totals'], old_totals)
-    assert all(row.get('confirmed_posting') == 0 for row in detail['rows']), detail['rows']
-    old_rows=[{key:value for key,value in row.items() if key!='confirmed_posting'} for row in detail['rows']]
-    key=lambda row:(row['profile_id'],row['window_name'],row['username'],row['instagram_user_id'])
-    assert sorted(before['rows'],key=key) == sorted(old_rows,key=key)
+    """Preserve nonposting metrics and rows across the explicit scope removal."""
+    retired = {'posting', 'confirmed_posting'}
+    assert not retired.intersection(detail['totals']), detail['totals']
+    assert all(not retired.intersection(row) for row in detail['rows']), detail['rows']
+    old_totals = {key: value for key, value in before['totals'].items() if key not in retired}
+    assert detail['totals'] == old_totals, (detail['totals'], old_totals)
+    old_rows = [{key: value for key, value in row.items() if key not in retired} for row in before['rows']]
+    key = lambda row: (row['profile_id'], row['window_name'], row['username'], row['instagram_user_id'])
+    assert sorted(detail['rows'], key=key) == sorted(old_rows, key=key)
 
 
 def run(records, legacy_path, current_records=None, keep_fixture=None):
@@ -98,9 +99,10 @@ def run(records, legacy_path, current_records=None, keep_fixture=None):
         _, result['csv_detail_repeat'] = timed(work_report, db, owner)
         assert after['totals']['collection'] == current and after['totals']['split'] == 20, after
         assert {k: detail['totals'][k] for k in after['totals']} == after['totals']
-        assert after['totals']['confirmed_posting'] == 0 and detail['totals']['confirmed_posting'] == 0
-        assert all(row['confirmed_posting'] == 0 for row in detail['rows'])
-        result['confirmed_posting_zero'] = True
+        assert not {'posting', 'confirmed_posting'}.intersection(after['totals'])
+        assert not {'posting', 'confirmed_posting'}.intersection(detail['totals'])
+        assert all(not {'posting', 'confirmed_posting'}.intersection(row) for row in detail['rows'])
+        result['posting_metrics_removed'] = True
         result['legacy_metric_and_row_parity'] = None
         if legacy_path:
             assert_legacy_report_parity(before, detail)

@@ -48,8 +48,6 @@ export interface CollectorCoreBridge {
 export type CoreIntegrationResult = {
   restarted: boolean;
   saved?: boolean;
-  pexels_configured?: boolean;
-  pexels_activated?: boolean;
   cloud_configured?: boolean;
   cloud_activated?: boolean;
   restart_required?: boolean;
@@ -59,7 +57,6 @@ export type CoreIntegrationConfiguration = {
   bitbrowserPort?: number;
   bitbrowserApiKey?: string;
   openaiApiKey?: string;
-  pexelsApiKey?: string;
   cloud?: {enabled:boolean;projectUrl:string;publishableKey:string};
 };
 
@@ -1008,14 +1005,6 @@ export class CollectorCoreClient {
   }
   reportReviewDecision<T>(kind: "split" | "private_follow", recordId: string, decision: "passed" | "failed", start: string, end: string, utcOffsetMinutes: number) {
     return this.request<T>("/api/reports/review-decision", {method:"POST", body:{kind, record_id:recordId, decision, start, end, utc_offset_minutes:utcOffsetMinutes}});
-  }
-  postingSnapshot<T>(timezone?: string, cursor?: string | null, limit?: number) {
-    const parts = [timezone ? `timezone=${encodeURIComponent(timezone)}` : "", cursor ? `cursor=${encodeURIComponent(cursor)}` : "", limit === undefined ? "" : `limit=${encodeURIComponent(String(limit))}`].filter(Boolean);
-    const query = parts.length ? `?${parts.join("&")}` : "";
-    return this.request<T>(`/api/posting/snapshot${query}`);
-  }
-  postingCommand<T = Record<string, unknown>>(body: Record<string, unknown>) {
-    return this.request<T>("/api/posting/command", {method: "POST", body});
   }
   studioSnapshot<T>() { return this.request<T>("/api/studio/snapshot"); }
   studioCommand(body: Record<string, unknown>) { return this.request<Record<string, unknown>>("/api/studio/command", { method: "POST", body }); }

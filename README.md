@@ -1,7 +1,7 @@
 # Juxin IG desktop v3.0.4
 
 Windows desktop source for 聚鑫国际, an Instagram account workspace with collection,
-review, reporting, account nurture and a single-image posting queue. The desktop
+review, reporting, account nurture and account management. The desktop
 shell is Electron; the local Core is Python. Product version: **3.0.4**. Source
 revision: **stability-r94**. Feature revision: **2026.10.05-r6.4-ig**.
 
@@ -27,22 +27,23 @@ the acceptance boundary.
 - Cloud backup is off by default. To use it, create and configure your own
   Supabase project with `cloud/supabase-init.sql`, enter its HTTPS URL and
   publishable/anon key in the cloud workspace, then explicitly enable it and sign
-  in. Enabling and signing in uploads workspace records and managed materials
-  to that project. Never enter a `service_role` or secret key.
+  in. Enabling and signing in uploads supported collection, nurture and account
+  workspace records to that project. Legacy posting materials and retirement
+  archives stay local and are excluded from this backup. Never enter a `service_role` or secret key.
 - Immersive Translate is optional. Its proprietary userscript is not included.
   Obtain the supported original version from an authorized vendor distribution,
   import the local file through translation settings, then explicitly enable
   translation and select your provider. The exact accepted version/hash and
   privacy boundary are in the [integration notice](desktop/vendor/immersive-translate/NOTICE.txt).
   Vendor accounts, terms and fees remain the user's choice.
-- Pexels and any other credential-based services require the user's own valid
-  local configuration. Source code and installers do not supply service credentials.
 
 ## Operating boundaries
 
-Unknown posting results remain unknown and must not be automatically submitted
-again. Window leases and authoritative close confirmation protect concurrent
-tasks. Account credentials, browser sessions, databases and generated evidence
+Posting and Pexels are removed. Legacy captions, materials and history are
+verified in a recoverable local archive before safely idle associations leave
+active storage; active or uncertain owners remain fenced. Window leases and
+authoritative close confirmation protect concurrent tasks. See
+[removal acceptance](docs/POSTING_REMOVAL_ACCEPTANCE.md). Account credentials, browser sessions, databases and generated evidence
 belong outside the public repository.
 
 - [中文说明](README_CN.md)

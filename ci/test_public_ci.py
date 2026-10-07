@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import traceback
 from types import SimpleNamespace, TracebackType
 import unittest
 from unittest.mock import patch
@@ -29,6 +30,102 @@ def identity():
 
 
 class PublicContracts(unittest.TestCase):
+    def test_retired_routes_require_exact_frozen_http_rejection(self):
+        proof={'verified':True,'http_status':404,'endpoints':[
+            {'path':'/api/posting/snapshot','method':'GET'},
+            {'path':'/api/posting/command','method':'POST'},
+            {'path':'/api/internal/integrations/pexels','method':'POST'}]}
+        self.assertIs(common.validate_posting_removal(proof),proof)
+        for key in proof:
+            bad=copy.deepcopy(proof);bad.pop(key)
+            with self.subTest(missing=key),self.assertRaises(RuntimeError):
+                common.validate_posting_removal(bad)
+        mutations=[dict(proof,verified=1),dict(proof,http_status=200),
+            dict(proof,endpoints=proof['endpoints'][:-1]),
+            dict(proof,endpoints=list(reversed(proof['endpoints']))),
+            dict(proof,unexpected='alias')]
+        for bad in mutations:
+            with self.assertRaises(RuntimeError):common.validate_posting_removal(bad)
+        for endpoint in range(3):
+            bad=copy.deepcopy(proof);bad['endpoints'][endpoint]['method']='DELETE'
+            with self.assertRaises(RuntimeError):common.validate_posting_removal(bad)
+
+    def test_installed_failure_reads_only_exact_child_log_and_remains_failed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'scripts/verify_installed_recovery_r64.py'
+            source.parent.mkdir()
+            source.write_text('raise RuntimeError("private-message-token")\n', encoding='utf-8')
+            common.write_json(root / 'SOURCE_SHA256.json', {'scripts/verify_installed_recovery_r64.py':'a'*64})
+            log = root / 'installer-output/installed-recovery-r64-stdout-full.log'
+            log.parent.mkdir()
+            try:
+                exec(compile(source.read_text(), str(source), 'exec'), {})
+            except RuntimeError:
+                with log.open('w', encoding='utf-8') as stream:
+                    traceback.print_exc(file=stream)
+            failure = RuntimeError('outer process rejected')
+            with patch.object(ci, 'ROOT', root), patch.object(common, 'ROOT', root), \
+                 patch.object(ci, 'state_root', return_value=root), patch.object(common, 'state_root', return_value=root), \
+                 patch.object(ci, 'verify_run_state', return_value={'nonce':'a'*32}), \
+                 patch.object(ci, 'read_json', return_value={'status':'passed'}), \
+                 patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+                 patch.object(ci, 'run_owned', side_effect=failure) as run, \
+                 patch.object(common, 'bounded_log_tail', wraps=common.bounded_log_tail) as tail, \
+                 patch.object(ci.runpy, 'run_path') as validate, patch.object(ci, 'installed_hashes') as hashes:
+                with self.assertRaises(RuntimeError) as caught:
+                    ci.installed()
+                self.assertIs(caught.exception, failure)
+                run.assert_called_once_with('actual-installed-product-acceptance', ['powershell'], 3600)
+                tail.assert_called_once_with(log)
+                validate.assert_not_called(); hashes.assert_not_called()
+                summary = common.failure_diagnostics()
+            record = summary['records'][0]
+            self.assertEqual(record['gate'], 'installed-recovery-child')
+            self.assertEqual(record['outcome'], 'validation-failed')
+            self.assertIsNone(record['exit_code'])
+            self.assertTrue(record['diagnostic_parse_succeeded'])
+            self.assertEqual(record['source_locations'], [{'file':'scripts/verify_installed_recovery_r64.py','line':1}])
+            self.assertEqual(record['observed_exception_categories'], ['RuntimeError'])
+            for private in (str(root), 'private-message-token', 'outer process rejected', 'Traceback'):
+                self.assertNotIn(private, json.dumps(summary))
+
+    def test_installed_diagnostic_missing_log_or_parser_error_never_masks_gate_failure(self):
+        for missing in (True, False):
+            with self.subTest(missing_log=missing), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                common.write_json(root / 'SOURCE_SHA256.json', {})
+                failure = RuntimeError('original installed failure')
+                with patch.object(ci, 'ROOT', root), patch.object(common, 'ROOT', root), \
+                     patch.object(ci, 'state_root', return_value=root), patch.object(common, 'state_root', return_value=root), \
+                     patch.object(ci, 'verify_run_state', return_value={'nonce':'a'*32}), \
+                     patch.object(ci, 'read_json', return_value={'status':'passed'}), \
+                     patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+                     patch.object(ci, 'run_owned', side_effect=failure), \
+                     patch.object(common, 'parse_diagnostic_tails', side_effect=RuntimeError('private parser error')):
+                    if not missing:
+                        log = root / 'installer-output/installed-recovery-r64-stdout-full.log'
+                        log.parent.mkdir(); log.write_text('RuntimeError: private-child-message')
+                    with self.assertRaises(RuntimeError) as caught:
+                        ci.installed()
+                    self.assertIs(caught.exception, failure)
+                    record = common.failure_diagnostics()['records'][0]
+                self.assertFalse(record['diagnostic_parse_succeeded'])
+                self.assertTrue(all(record[field] == [] for field in common.DIAGNOSTIC_LIST_FIELDS))
+
+    def test_successful_installed_gate_still_validates_and_does_not_capture_failure(self):
+        with patch.object(ci, 'verify_run_state', return_value={'nonce':'a'*32}), \
+             patch.object(ci, 'state_root', return_value=Path('/synthetic-run')), \
+             patch.object(ci, 'read_json', return_value={'status':'passed'}), \
+             patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+             patch.object(ci, 'run_owned') as run, patch.object(ci.runpy, 'run_path') as validate, \
+             patch.object(ci, 'installed_hashes', return_value={'synthetic':'hash'}) as hashes, \
+             patch.object(ci, 'save_failure_diagnostic') as diagnostic:
+            self.assertEqual(ci.installed(), {'synthetic':'hash'})
+            run.assert_called_once_with('actual-installed-product-acceptance', ['powershell'], 3600)
+            validate.assert_called_once_with(str(ci.ROOT / 'ci/public_ci_validate_installed.py'))
+            hashes.assert_called_once_with(); diagnostic.assert_not_called()
+
     def test_exact_actions_and_read_only_repository_guard(self):
         workflow=(HERE.parent/'.github/workflows/public-windows-verify.yml').read_text()
         self.assertIn('contents: read',workflow)
@@ -174,36 +271,35 @@ class PublicContracts(unittest.TestCase):
     def test_installed_checks_preserve_scale_upgrade_and_actual_api(self):
         text=(HERE/'public_ci_verify_installed.ps1').read_text()
         for token in ('--pure-ig','--snapshot-scale','--collection-completion','--standalone-nurture',
-                      '--posting-workflow','--nurture-cleanup-upgrade','441552','602831',
+                      '--nurture-cleanup-upgrade','441552','602831','posting_removed','$removed.http_status -ne 404',
                       'performance_indexes_verified.Count -ne 3','compact_wire.canonical_rows_equal',
                       'normal_restart.retained_data','pure_ig_upgrade.ig_identity_hash_preserved',
-                      'completed_card_dismissal','repeated_startup_idempotent','five_card_totals',
+                      'completed_card_dismissal','repeated_startup_idempotent','four_card_totals',
                       'scripts\\verify_installed_recovery_r64.py',"'120'",'-TimeoutSeconds 180',
                       "'^INSTALLED_RECOVERY_R64=PASS '"):
             self.assertIn(token,text)
         self.assertLess(text.index('--nurture-cleanup-upgrade'),text.index('scripts\\verify_installed_recovery_r64.py'))
         stage=(HERE/'public_ci_validate_installed.py').read_text()
-        for token in ('r63_upgrade_proof.py','r63_native_proof.py','r64_crop_proof.py',
-                      'r64_recovery_ui_proof.py','verify_installed_recovery_r64.py',
+        for token in ('r63_upgrade_proof.py','r63_native_proof.py',
+                      'r64_recovery_ui_proof.py','verify_installed_recovery_r64.py','validate_posting_removal',
                       "same_json(installed.get('recovery_api'),recovery_api)",'core_upgrade_manifest_sha256'):
             self.assertLess(stage.index(token),stage.index("print('PUBLIC_INSTALLED_ACCEPTANCE=PASS')"))
 
-    def test_exact_six_early_fixtures_and_all_thirty_six_groups(self):
+    def test_exact_nonposting_early_fixtures_and_all_retained_groups(self):
         text=(HERE/'public_ci_early.py').read_text();tree=ast.parse(text)
         loop=next(n for n in tree.body if isinstance(n,ast.For) and isinstance(n.target,ast.Name) and n.target.id=='fixture')
         fixtures=['desktop/tests/nurture-cleanup-native-r63.cjs','desktop/tests/nurture-reels-r6.integration.cjs',
-            'desktop/tests/posting-viewport-native-r62.cjs','desktop/tests/posting-r6.integration.cjs',
-            'desktop/tests/crop-icon-r64.cjs','desktop/tests/recovery-ui-native-r64.cjs']
+            'desktop/tests/recovery-ui-native-r64.cjs']
         self.assertEqual(list(ast.literal_eval(loop.iter)),fixtures)
         groups=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='patterns' for t in n.targets))
         import public_ci_groups
-        self.assertEqual(groups,public_ci_groups.PATTERNS);self.assertEqual(len(groups),36)
-        for name in ('IGAC_REQUIRE_POSTING_BROWSER','IGAC_REQUIRE_PROFILE_BROWSER',
+        self.assertEqual(groups,public_ci_groups.PATTERNS);self.assertEqual(len(groups),27)
+        for name in ('IGAC_REQUIRE_COLLECTION_BROWSER','IGAC_REQUIRE_NURTURE_BROWSER','IGAC_REQUIRE_PROFILE_BROWSER',
                      'IGAC_REQUIRE_STANDALONE_NURTURE_BROWSER','IGAC_REQUIRE_FINAL_SEED_BROWSER',
                      'JUXIN_REQUIRE_NURTURE_CLEANUP_NATIVE','JUXIN_REQUIRE_RECOVERY_UI_NATIVE'):
             self.assertIn(name+"='1'",text)
         self.assertIn("case_timeout='90' if pattern=='test_final_seed_browser_r62.py' else '180'",text)
-        self.assertLess(text.index('if failures:'),text.index('native=json.loads'))
+        self.assertLess(text.index('if failures:'),text.index('cleanup_native=json.loads'))
 
     def test_saturation_precheck_uses_original_command_and_required_browser(self):
         tree=ast.parse((HERE/'public_ci_early.py').read_text())
@@ -226,24 +322,15 @@ class PublicContracts(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'mock saturation failure'):
             exec(compile(module,'<mock saturation precheck>','exec'),scope)
 
-    def test_crop_precheck_runs_first_and_failure_cannot_reach_full_suite(self):
-        tree=ast.parse((HERE/'public_ci_early.py').read_text())
-        call=next(n for n in tree.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call)
-            and isinstance(n.value.func,ast.Name) and n.value.func.id=='run_owned'
-            and n.value.args and isinstance(n.value.args[0],ast.Constant)
-            and n.value.args[0].value=='early-crop-focused-precheck')
-        native=next(n for n in tree.body if isinstance(n,ast.For)
-            and isinstance(n.target,ast.Name) and n.target.id=='fixture')
-        self.assertLess(tree.body.index(call),tree.body.index(native))
-        calls=[];env={'IGAC_REQUIRE_POSTING_BROWSER':'1'}
-        module=ast.Module(body=[call],type_ignores=[])
-        scope={'python':'verified-python','env':env,'run_owned':lambda *args:calls.append(args)}
-        exec(compile(module,'<mock crop precheck>','exec'),scope)
-        self.assertEqual(calls,[('early-crop-focused-precheck', ['verified-python','-X','utf8',
-            'scripts/run_backend_tests.py','-p','test_crop_icon_r64.py','--case-timeout','180','-v'],1800,env)])
-        scope['run_owned']=lambda *args: (_ for _ in ()).throw(RuntimeError('mock crop failure'))
-        with self.assertRaisesRegex(RuntimeError,'mock crop failure'):
-            exec(compile(module,'<mock crop precheck>','exec'),scope)
+    def test_removed_posting_and_crop_receipts_cannot_become_required_gates(self):
+        retired = ('r64-crop-icon-native.json', 'r62-posting-viewport-native.json',
+                   'r6-posting-stress.json', 'r6-posting-stress-bounds.json')
+        for name in ('public_ci_early.py', 'public_ci_validate_installed.py', 'public_ci_common.py'):
+            text=(HERE/name).read_text()
+            for receipt in retired:
+                self.assertNotIn(receipt,text)
+        self.assertFalse((HERE/'r64_crop_proof.py').exists())
+        self.assertFalse((HERE/'test-r64-crop-proof.py').exists())
 
     def test_native_loop_records_only_success_and_rejects_subsets_or_reordering(self):
         tree=ast.parse((HERE/'public_ci_early.py').read_text())
@@ -462,7 +549,7 @@ class PublicContracts(unittest.TestCase):
         end='& .venv\\Scripts\\python.exe scripts\\verify_backend_smoke.py'
         tail=script[script.index(start):];tail=tail[:tail.index(end)]
         patterns=re.findall(r'run_backend_tests\.py(?:",\s*"-p",\s*"| -p ")([^"]+)"',tail)
-        self.assertEqual(40,len(patterns));self.assertEqual('test_follow_monitor.py',patterns[0])
+        self.assertEqual(29,len(patterns));self.assertEqual('test_follow_monitor.py',patterns[0])
         self.assertEqual('test_account_updates.py',patterns[-1]);self.assertIn('test_final_seed_browser_r62.py',patterns)
         self.assertIn('$env:IGAC_TEST_CASE_TIMEOUT_SECONDS = "180"',script)
         core=(HERE.parent/'scripts/verify_r18_core.py').read_text()
@@ -477,16 +564,16 @@ class PublicContracts(unittest.TestCase):
 
     def test_registered_native_renderer_gates_stay_mandatory(self):
         package=json.loads((HERE.parent/'package.json').read_text())
-        for name in ('renderer/tests/posting-withdraw-r63.test.mjs','renderer/tests/hidden-collection-blocker-r63.test.mjs'):
+        for name in ('renderer/tests/hidden-collection-blocker-r63.test.mjs',):
             self.assertIn(name,package['scripts']['test:renderer'])
         self.assertIn('desktop/tests/recovery-ui-native-r64.test.cjs',package['scripts']['test:desktop'])
         script=(HERE.parent/'scripts/build_windows.ps1').read_text(encoding='utf-8-sig')
-        self.assertLess(script.index('@("run", "build:electron")'),script.index('"desktop\\tests\\crop-icon-r64.cjs"'))
+        self.assertLess(script.index('@("run", "build:electron")'),script.index('"desktop\\tests\\recovery-ui-native-r64.cjs"'))
         self.assertIn('JUXIN_REQUIRE_RECOVERY_UI_NATIVE = "1"',script)
         self.assertIn('if ($R64NativeExitCode -ne 0) { throw',script)
         source=(HERE.parent/'scripts/verify_build_source.mjs').read_text()
         for path in ('backend/app/browser_admission.py','backend/app/nurture_collection_blocker.py',
-                     'backend/app/instagram_crop_dom.py','backend/tests/test_combined_recovery_r64.py',
+                     'backend/tests/test_combined_recovery_r64.py',
                      'scripts/verify_installed_recovery_r64.py','desktop/tests/recovery-ui-native-r64.cjs',
                      'renderer/tests/fixtures/recovery-ui-r64.tsx'):
             self.assertIn(path,source)

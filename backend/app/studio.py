@@ -1,6 +1,5 @@
 from __future__ import annotations
 import asyncio
-import base64
 import json
 import random
 import time
@@ -12,10 +11,8 @@ from .errors import ConflictError, NotFoundError, ValidationError, UpstreamUnava
 from .service import isoformat
 from .playwright_worker import PlaywrightWorker
 from .browser_cleanup import disconnect_worker, close_profile_and_wait
-from .studio_media import StudioMedia
-from .studio_cleanup import cleanup_materials, asset_ids as job_asset_ids
-from .studio_models import PostingConfig, NurtureConfig
-from .studio_worker import StudioBrowser, ResultUncertain, PostingRejected, instagram_target
+from .studio_models import NurtureConfig
+from .studio_worker import StudioBrowser, ResultUncertain, instagram_target
 from .standalone_nurture import POLICY as NURTURE_POLICY
 
 TERMINAL={'completed','failed','cancelled','needs_review'}
@@ -35,8 +32,10 @@ async def finish_preparation(function,*args):
     return operation.result()
 
 def config_for(kind, data):
+    if kind != 'nurture':
+        raise ValidationError('仅支持养号任务')
     try:
-        return (PostingConfig if kind in {'posting','material'} else NurtureConfig).model_validate(data).model_dump()
+        return NurtureConfig.model_validate(data).model_dump()
     except ModelError as exc:
         raise ValidationError('; '.join(e['msg'] for e in exc.errors())) from None
 
@@ -76,16 +75,16 @@ def standalone_config(config):
     return dict(fixed,steps=steps,standalone_policy=NURTURE_POLICY)
 
 class StudioManager:
-    def __init__(self, service, bitbrowser, *, posting_enabled=True):
+    def __init__(self, service, bitbrowser):
         self.service=service; self.db=service.database; self.bitbrowser=bitbrowser
-        self.posting_enabled=posting_enabled
-        self.media=StudioMedia(self.db); self.tasks={}; self.gates={}; self.task_meta={}; self.task_profiles={}; self.scheduler=None; self.stopping=False
+        self.tasks={}; self.gates={}; self.task_meta={}; self.task_profiles={}; self.scheduler=None; self.stopping=False
         # Control operations are short, loop-owned state transitions. Share this
         # lock with failed-job removal so a retry and removal cannot both win.
         self.control_lock=asyncio.Lock()
         self.scheduler_error=''
         self.cleanup_recovery_ids=[];self.cleanup_recovery_task=None
         self.cleanup_profile_active=None
+        self.reconcile_retired_window=None
         self.cleanup_recovery_retry_delays=(5.0,15.0,60.0)
         self.cleanup_recovery_batch_size=25
 
@@ -95,13 +94,11 @@ class StudioManager:
 
     def recover(self):
         with self.db.write() as c:
-            c.execute("UPDATE studio_jobs SET status='completed',message='已恢复保存的发帖成功记录' WHERE kind='posting' AND status='running' AND cursor=1 AND inflight=0 AND json_extract(result_json,'$.published')=1")
-            c.execute("UPDATE studio_jobs SET status=CASE WHEN inflight=1 THEN 'needs_review' ELSE 'paused' END, message=CASE WHEN inflight=1 THEN '上次在提交动作时中断，请人工确认结果' ELSE '上次运行中断，可继续未完成步骤' END WHERE status IN ('running','waiting_window')")
-            if not self.posting_enabled:
-                c.execute("UPDATE studio_jobs SET status=CASE WHEN inflight=1 THEN 'needs_review' ELSE 'paused' END, message='自动发帖已停用，进度和素材保留',updated_at=? WHERE kind IN ('posting','material') AND status IN ('queued','waiting_window','running','paused','needs_review')",(isoformat(),))
+            c.execute("UPDATE studio_jobs SET status=CASE WHEN inflight=1 THEN 'needs_review' ELSE 'paused' END, message=CASE WHEN inflight=1 THEN '上次在提交动作时中断，请人工确认结果' ELSE '上次运行中断，可继续未完成步骤' END WHERE kind='nurture' AND status IN ('running','waiting_window')")
             # A completed round can still own a browser whose retirement failed
             # or was interrupted. Keep that exact generation across startup.
             c.execute("""DELETE FROM browser_operation_leases WHERE operation_type='studio'
+                AND EXISTS (SELECT 1 FROM studio_jobs own_job WHERE own_job.id=browser_operation_leases.entity_id AND own_job.kind='nurture' AND own_job.owner_user_id=browser_operation_leases.owner_user_id AND own_job.profile_id=browser_operation_leases.profile_id)
                 AND NOT EXISTS (SELECT 1 FROM studio_jobs job
                     WHERE job.profile_id=browser_operation_leases.profile_id AND job.kind='nurture'
                     AND job.status='completed' AND json_extract(job.result_json,'$.window_hold')=1)""")
@@ -117,7 +114,7 @@ class StudioManager:
                 if not owned:self.cleanup_recovery_ids.append((row['owner_user_id'],row['id'],row['profile_id']))
                 if owned:self.db.live_browser_lease_tokens.add(lease['lease_token'])
                 c.execute('UPDATE studio_jobs SET result_json=?,message=? WHERE id=?',(json.dumps(saved,ensure_ascii=False),'执行已完成，正在重试关闭窗口' if owned else '执行已完成；窗口占用凭证已失效，保留清理记录等待核验',row['id']))
-            held=[dict(r) for r in c.execute("SELECT id,owner_user_id,profile_id FROM studio_jobs WHERE deleted_at IS NULL AND (status='needs_review' OR (status='paused' AND json_extract(result_json,'$.window_hold')=1))")]
+            held=[dict(r) for r in c.execute("SELECT id,owner_user_id,profile_id FROM studio_jobs WHERE kind='nurture' AND deleted_at IS NULL AND (status='needs_review' OR (status='paused' AND json_extract(result_json,'$.window_hold')=1))")]
         for row in held:
             try:self.service._acquire_browser_lease_record(row['owner_user_id'],row['profile_id'],operation_type='studio',entity_id=row['id'],ttl_seconds=600)
             except ConflictError:pass
@@ -178,15 +175,6 @@ class StudioManager:
 
     async def command(self, owner, body):
         action=body.get('action'); kind=body.get('kind')
-        if not self.posting_enabled and (action=='start_drafts' or action=='start' and kind in {'posting','material'}):
-            raise ValidationError('自动发帖已暂时停用，不能启动发布或备稿任务')
-        if action in {'set_draft_targets','start_drafts'}:
-            from .studio_drafts import set_targets,start_drafts
-            return (set_targets if action=='set_draft_targets' else start_drafts)(self,owner,body)
-        if action=='delete_unfinished':
-            from .studio_history import delete_unfinished
-            if 'job_id' in body and (not isinstance(body['job_id'],str) or not body['job_id'].strip()):raise ValidationError('任务编号无效')
-            return await delete_unfinished(self,owner,body.get('job_id'))
         if action=='delete_failed_nurture':
             from .studio_history import delete_failed_nurture
             ident=body.get('job_id')
@@ -194,21 +182,7 @@ class StudioManager:
             return await delete_failed_nurture(self,owner,ident)
         if action=='control': return await self.control(owner,str(body.get('job_id','')),body.get('operation'))
         if action=='start_waiting_nurture': return self.start_waiting_nurture(owner,body.get('job_ids'))
-        if action=='delete_asset': return await asyncio.to_thread(cleanup_materials,self,owner,str(body.get('asset_id','')),active_ids=self.active_ids())
-        if action=='clear_published_media':
-            if 'job_id' in body and (not isinstance(body['job_id'],str) or not body['job_id'].strip()):raise ValidationError('任务编号无效')
-            return await asyncio.to_thread(cleanup_materials,self,owner,job_id=body.get('job_id'),active_ids=self.active_ids())
-        if action=='search': return await asyncio.to_thread(self.media.search,body.get('query',''),body.get('media_type','photo'),body.get('page',1))
-        if action=='select_asset': return await asyncio.to_thread(self.media.select,owner,str(body.get('asset_id','')))
-        if action=='import_pexels':
-            ident=await asyncio.to_thread(self.media.import_pexels,owner,body.get('provider_id',''),body.get('media_type','photo'))
-            return await asyncio.to_thread(self.media.select,owner,ident)
-        if action=='upload':
-            try: raw=base64.b64decode(body.get('data',''),validate=True)
-            except Exception: raise ValidationError('素材数据无效') from None
-            ident=await asyncio.to_thread(self.media.store,owner,raw,body.get('name','手动素材'),'manual',body.get('media_type','photo'))
-            return await asyncio.to_thread(self.media.select,owner,ident)
-        if kind not in {'posting','nurture','material'}: raise ValidationError('无效任务类型')
+        if kind != 'nurture': raise ValidationError('仅支持养号任务')
         config=config_for(kind,body.get('config',{}))
         if action=='save_template':
             if kind=='nurture':nurture_targets(config)
@@ -218,30 +192,18 @@ class StudioManager:
             return {'saved':True}
         if action!='start': raise ValidationError('无效操作')
         if not isinstance(body.get('profile_ids',[]),list): raise ValidationError('窗口列表格式无效')
-        profiles=list(dict.fromkeys(str(p).strip() for p in body.get('profile_ids',[]) if str(p).strip())) if kind!='material' else ['']
+        profiles=list(dict.fromkeys(str(p).strip() for p in body.get('profile_ids',[]) if str(p).strip()))
         if not profiles: raise ValidationError('请选择窗口')
         if kind=='nurture' and len(profiles)>1000:raise ValidationError('每批养号最多选择 1000 个窗口')
         request=str(body.get('request_id',''))
         if not 10<=len(request)<=100: raise ValidationError('缺少任务请求标识')
-        if kind in {'posting','material'}:
-            if config['source']=='manual':
-                if not config['asset_ids']: raise ValidationError('请先导入并选择素材')
-                for ident in config['asset_ids']: self.media.get(owner,ident)
-            elif not config['query'].strip(): raise ValidationError('请输入素材关键词或 AI 描述')
-            if (config['source']=='ai' or config['auto_caption']) and not self.media.ai_key(): raise ValidationError('请先配置 OpenAI 密钥')
         try:
-            # A draft is prepared now even when a future publishing time was
-            # selected. It never waits for or starts the publishing schedule.
-            due=datetime.fromisoformat(config['scheduled_at'].replace('Z','+00:00')) if config['scheduled_at'] and kind!='material' else datetime.now(timezone.utc)
+            due=datetime.fromisoformat(config['scheduled_at'].replace('Z','+00:00')) if config['scheduled_at'] else datetime.now(timezone.utc)
             if due.tzinfo is None: raise ValueError()
             due=due.astimezone(timezone.utc)
         except ValueError: raise ValidationError('计划时间必须包含时区') from None
         jobs=[]; rounds=config['rounds'] if kind=='nurture' else 1
         with self.db.write() as c:
-            if kind in {'posting','material'} and config['source']=='manual':
-                for ident in config['asset_ids']:
-                    asset=c.execute('SELECT path FROM studio_assets WHERE id=? AND owner_user_id=?',(ident,owner)).fetchone()
-                    if not asset or not asset['path']:raise ValidationError('所选素材已清理，请重新选择素材')
             for round_index in range(rounds):
                 for i,profile in enumerate(profiles):
                     cfg=dict(config)
@@ -253,11 +215,13 @@ class StudioManager:
                     existing=c.execute('SELECT id FROM studio_jobs WHERE owner_user_id=? AND request_key=?',(owner,key)).fetchone()
                     if existing:
                         jobs.append(existing['id']);continue
-                    if kind=='nurture' and c.execute("SELECT 1 FROM studio_jobs WHERE profile_id=? AND deleted_at IS NULL AND status IN ('queued','waiting_window','running','paused','needs_review')",(profile,)).fetchone():
+                    if kind=='nurture' and c.execute("SELECT 1 FROM studio_jobs WHERE profile_id=? AND kind='nurture' AND deleted_at IS NULL AND status IN ('queued','waiting_window','running','paused','needs_review')",(profile,)).fetchone():
                         raise ConflictError('所选窗口已有未完成任务，请先停止或完成原任务')
-                    if kind!='material' and c.execute('SELECT 1 FROM browser_operation_leases WHERE profile_id=?',(profile,)).fetchone():
+                    from .browser_admission import assert_no_durable_window_hold
+                    assert_no_durable_window_hold(c,owner,profile)
+                    if c.execute('SELECT 1 FROM browser_operation_leases WHERE profile_id=?',(profile,)).fetchone():
                         raise ConflictError('所选窗口已被任务占用，请等待释放后重新选择')
-                    if kind!='material' and c.execute("SELECT 1 FROM studio_jobs WHERE profile_id=? AND kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1",(profile,)).fetchone():
+                    if c.execute("SELECT 1 FROM studio_jobs WHERE profile_id=? AND kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1",(profile,)).fetchone():
                         raise ConflictError('所选窗口的养号清理仍待确认，请等待释放后重新选择')
                     planned=due+timedelta(seconds=config['interval_seconds']*(round_index*len(profiles)+i))
                     c.execute('INSERT OR IGNORE INTO studio_jobs(id,owner_user_id,request_key,kind,profile_id,config_json,total_steps,due_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
@@ -319,10 +283,13 @@ class StudioManager:
             if saved is None:raise NotFoundError('任务不存在')
             row=dict(saved)
         else:row=self.get(owner,ident)
+        if row['kind']!='nurture':raise ValidationError('仅支持养号任务')
         if operation=='retry_cleanup':
             result=json.loads(row['result_json'])
             if row['kind']!='nurture' or row['status']!='completed' or not result.get('window_hold'):
                 raise ConflictError('仅可重试已完成养号任务的窗口清理')
+            if self.reconcile_retired_window is not None:
+                await finish_preparation(self.reconcile_retired_window,owner,row['profile_id'])
             with self.db.read() as c:
                 owned=c.execute("SELECT lease_token FROM browser_operation_leases WHERE profile_id=? AND owner_user_id=? AND operation_type='studio' AND entity_id=?",(row['profile_id'],owner,ident)).fetchone()
             if result.get('window_cleanup',{}).get('state')=='lease_lost' or owned is None:
@@ -349,41 +316,25 @@ class StudioManager:
             self.update(ident,status=status,inflight=0,message='已停止此轮并释放窗口' if status=='cancelled' else '已记录人工核验，点击继续执行剩余步骤')
             if status=='cancelled':self.service.release_browser_leases_for_entity(owner,ident,operation_type='studio')
             return {'status':status}
-        if not self.posting_enabled and row['kind'] in {'posting','material'} and operation in {'resume','retry'}:
-            raise ValidationError('自动发帖已暂时停用，不能继续或重试此任务')
-        if operation in {'retry','confirm_published','confirm_not_published'}:
+        if operation=='retry':
             if ident in self.active_ids(): raise ConflictError('任务正在释放窗口，请稍后再处理')
-            result=json.loads(row['result_json'])
-            if operation=='retry':
-                # Serialize retry eligibility with media cleanup: a deleted
-                # asset must never be put back into the runnable queue.
-                with self.db.write() as c:
-                    current=c.execute('SELECT * FROM studio_jobs WHERE id=? AND owner_user_id=?',(ident,owner)).fetchone()
-                    if current is None or current['deleted_at']:raise NotFoundError('任务不存在')
-                    row=dict(current)
-                    if row['status']!='failed' or row['inflight']:raise ConflictError('只可重试明确失败且未提交的任务')
-                    result=json.loads(row['result_json'])
-                    for asset in job_asset_ids(row):
-                        media=c.execute('SELECT path FROM studio_assets WHERE id=? AND owner_user_id=?',(asset,owner)).fetchone()
-                        if not media or not media['path']:
-                            raise ValidationError('原素材已删除，不能重试此任务；请重新选择素材并创建发帖任务')
-                    result.setdefault('attempts',[]).append({'at':isoformat(),'message':row['message'],'failure':result.pop('failure',None)})
-                    c.execute("UPDATE studio_jobs SET status='queued',due_at=?,result_json=?,message=?,updated_at=? WHERE id=?",(isoformat(),json.dumps(result,ensure_ascii=False),'已排队重试，复用已准备素材',isoformat(),ident))
-            else:
-                if row['kind']!='posting' or row['status']!='needs_review': raise ConflictError('仅能核验结果待确认的发帖任务')
-                result.setdefault('review_history',[]).append({'at':isoformat(),'decision':operation,'previous_message':row['message']})
-                if operation=='confirm_published':
-                    result.pop('failure',None)
-                    result.update(published=1,verification='manual',confirmed_at=isoformat())
-                    self.update(ident,status='completed',cursor=1,inflight=0,result_json=json.dumps(result,ensure_ascii=False),message='已人工核验：帖子发布成功')
-                else:
-                    self.update(ident,status='failed',inflight=0,result_json=json.dumps(result,ensure_ascii=False),message='已人工核验未发布，可点击重试')
-            return {'status':self.get(owner,ident)['status']}
+            # Re-read inside the write transaction: an archive/removal through
+            # another connection must win over this command's earlier read.
+            with self.db.write() as c:
+                current=c.execute('SELECT * FROM studio_jobs WHERE id=? AND owner_user_id=?',(ident,owner)).fetchone()
+                if current is None or current['deleted_at']:raise NotFoundError('任务不存在')
+                if current['kind']!='nurture':raise ValidationError('仅支持养号任务')
+                standalone_config(json.loads(current['config_json']))
+                if current['status']!='failed' or current['inflight']:raise ConflictError('只可重试明确失败且未提交的任务')
+                result=json.loads(current['result_json'])
+                result.setdefault('attempts',[]).append({'at':isoformat(),'message':current['message'],'failure':result.pop('failure',None)})
+                now=isoformat()
+                c.execute("UPDATE studio_jobs SET status='queued',due_at=?,result_json=?,message=?,updated_at=? WHERE id=? AND owner_user_id=? AND deleted_at IS NULL",(now,json.dumps(result,ensure_ascii=False),'已排队重试',now,ident,owner))
+            return {'status':'queued'}
         if operation not in {'pause','resume','cancel'}: raise ValidationError('无效控制操作')
         if row['status'] in TERMINAL: raise ConflictError('任务已经结束；结果待确认的任务不能自动重试')
         task=self.tasks.get(ident); gate=self.gates.get(ident)
         if operation=='pause':
-            if row['kind']=='posting' and row['inflight']: raise ConflictError('已提交发布，正在核验结果，请等待完成')
             self.update(ident,status='paused',message='已暂停，进度保留')
             if gate: gate.clear()
         elif operation=='resume':
@@ -411,7 +362,7 @@ class StudioManager:
         for ident,meta in self.task_meta.items():
             if ident in active: usage[meta]=usage.get(meta,0)+1
         with self.db.read() as c:
-            rows=c.execute("SELECT * FROM studio_jobs WHERE deleted_at IS NULL AND status IN ('queued','waiting_window') AND (? OR kind='nurture') AND due_at<=? ORDER BY due_at,created_at,rowid",(self.posting_enabled,isoformat())).fetchall()
+            rows=c.execute("SELECT * FROM studio_jobs WHERE deleted_at IS NULL AND status IN ('queued','waiting_window') AND kind='nurture' AND due_at<=? ORDER BY due_at,created_at,rowid",(isoformat(),)).fetchall()
             locked={r[0] for r in c.execute('SELECT profile_id FROM browser_operation_leases')}
             locked.update(r[0] for r in c.execute("SELECT profile_id FROM studio_jobs WHERE kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1"))
             heads={}
@@ -512,11 +463,7 @@ class StudioManager:
 
     async def _execute(self,row):
         ident=row['id'];owner=row['owner_user_id'];profile=row['profile_id'];kind=row['kind']
-        if not self.posting_enabled and kind in {'posting','material'}:
-            current=self.get(owner,ident)
-            if current['status'] not in TERMINAL:
-                self.update(ident,status='needs_review' if current['inflight'] else 'paused',message='自动发帖已停用，进度和素材保留')
-            return
+        if kind!='nurture':raise ValidationError('仅支持养号任务')
         lease=None;worker=None;renew=None;active_started=None;paused_seconds=0;base_seconds=0;watched_seconds=0.0;watch_committed=0.0;result={}
         def active_seconds():
             return watched_seconds
@@ -559,7 +506,7 @@ class StudioManager:
             self.update(ident,result_json=json.dumps(result,ensure_ascii=False))
         async def account_snapshot(data):
             await checkpoint()
-            from .posting_account_stats import save_account_snapshot
+            from .account_profile_stats import save_account_snapshot
             save_account_snapshot(self.db,owner,profile,data)
             if kind=='nurture':
                 snapshot=dict(data)
@@ -625,10 +572,6 @@ class StudioManager:
             result['nurture_actions'][token]['state']='confirmed'
             result['counts']=dict(counts)
             self.commit_nurture_step(owner,ident,None,result)
-        async def confirmed(data):
-            # Persist observed success before Done/navigation can fail or stop.
-            result.update(data)
-            self.update(ident,status='completed',cursor=1,inflight=0,result_json=json.dumps(result,ensure_ascii=False),message='分享已确认，正在完成并刷新首页')
         try:
             await checkpoint()
             config=json.loads(row['config_json']);result=json.loads(row['result_json'])
@@ -642,24 +585,8 @@ class StudioManager:
                     self.update(ident,status='needs_review',inflight=1,message='上次点赞结果待核验，不能自动继续');return
                 if base_seconds>0 and result.get('nurture_clock_policy')!='verified-playback-v2':
                     self.update(ident,status='paused',message='旧版实际时长未逐段核验播放，历史已保留；请停止原任务后新建养号任务');return
-            self.update(ident,status='running',message='正在准备养号计划' if kind=='nurture' else '正在准备素材与文案')
-            if kind in {'posting','material'} and not result.get('prepared'):
-                prepared=await finish_preparation(self.media.prepare,owner,config)
-                result['prepared']=prepared
-                self.update(ident,result_json=json.dumps(result,ensure_ascii=False),message='素材与文案已准备')
-                await checkpoint()
-            if kind in {'posting','material'}:
-                prepared=result['prepared']
-                assets=[self.media.get(owner,x) for x in prepared['asset_ids']]
-                with self.db.read() as c:
-                    plan=c.execute('SELECT name FROM account_window_plans WHERE owner_user_id=? AND profile_id=? AND archived=0',(owner,profile)).fetchone()
-                staged,assets=await finish_preparation(self.media.files.prepare,owner,ident,profile,plan['name'] if plan else profile,assets)
-                prepared.update(staged)
-                self.update(ident,result_json=json.dumps(result,ensure_ascii=False),message='素材已保存到桌面')
-                await checkpoint()
-            if kind=='material':
-                self.update(ident,status='completed',cursor=1,message='素材已保存到桌面，等待使用备稿并启动发帖');return
-            if kind!='material':
+            self.update(ident,status='running',message='正在准备养号计划')
+            if kind=='nurture':
                 try:
                     with self.db.read() as c:
                         existing=c.execute("SELECT lease_token FROM browser_operation_leases WHERE owner_user_id=? AND profile_id=? AND operation_type='studio' AND entity_id=?",(owner,profile,ident)).fetchone()
@@ -681,7 +608,7 @@ class StudioManager:
                 result.setdefault('nurture_started_at',isoformat())
                 unknown={'username':'','instagram_user_id':'','posts_count':None,'followers_count':None,'following_count':None,'checked_at':isoformat(),'status':'unavailable','message':'正在核验自己的主页'}
                 result.setdefault('account_snapshot',unknown)
-                from .posting_account_stats import save_account_snapshot
+                from .account_profile_stats import save_account_snapshot
                 save_account_snapshot(self.db,owner,profile,unknown)
                 result.pop('nurture_finished_at',None)
                 stamp_time()
@@ -692,7 +619,6 @@ class StudioManager:
             browser=StudioBrowser(worker,checkpoint,effect)
             browser.progress=progress
             browser.diagnostic=diagnostic
-            browser.confirmed=confirmed
             browser.account_snapshot=account_snapshot
             browser.nurture_confirmed=nurture_confirmed
             browser.nurture_actions=result.setdefault('nurture_actions',{})
@@ -708,47 +634,34 @@ class StudioManager:
             browser.nurture_clock=lambda:time.monotonic()-paused_seconds
             browser.nurture_watched=nurture_watched
             browser.nurture_remaining=lambda:config['minutes']*60-(base_seconds+active_seconds())
-            if kind=='posting':
-                prepared=result['prepared']
-                result.update(await browser.publish(assets,prepared['caption'],prepared['location']))
-                # Commit success and terminal state together. A crash between two
-                # writes must never turn a confirmed post into a resumable job.
-                self.update(ident,status='completed',cursor=1,inflight=0,result_json=json.dumps(result,ensure_ascii=False),message='发帖已确认，正在释放窗口')
-            else:
-                counts=result.get('counts',{})
-                for index in range(row['cursor'],len(config['steps'])):
-                    await checkpoint()
-                    remaining=config['minutes']*60-(base_seconds+active_seconds())
-                    if remaining<8:break
-                    step=dict(config['steps'][index],seconds=min(config['steps'][index]['seconds'],remaining))
-                    counts=await browser.nurture_step(step,counts,config)
-                    stamp_time()
-                    result['counts']=counts
-                    self.commit_nurture_step(owner,ident,index+1,result)
+            counts=result.get('counts',{})
+            for index in range(row['cursor'],len(config['steps'])):
+                await checkpoint()
+                remaining=config['minutes']*60-(base_seconds+active_seconds())
+                if remaining<8:break
+                step=dict(config['steps'][index],seconds=min(config['steps'][index]['seconds'],remaining))
+                counts=await browser.nurture_step(step,counts,config)
                 stamp_time()
-                message='养号已完成，正在释放窗口' if counts.get('like',0) else '浏览已完成，未确认点赞；请查看互动执行记录'
-                finished=isoformat()
-                result.setdefault('confirmed_at',finished)
-                result['nurture_finished_at']=finished
-                result['window_cleanup']={'state':'pending','lease_token':lease}
-                self.update(ident,status='completed',result_json=json.dumps(result,ensure_ascii=False),message=message)
+                result['counts']=counts
+                self.commit_nurture_step(owner,ident,index+1,result)
+            stamp_time()
+            message='养号已完成，正在释放窗口' if counts.get('like',0) else '浏览已完成，未确认点赞；请查看互动执行记录'
+            finished=isoformat()
+            result.setdefault('confirmed_at',finished)
+            result['nurture_finished_at']=finished
+            result['window_cleanup']={'state':'pending','lease_token':lease}
+            self.update(ident,status='completed',result_json=json.dumps(result,ensure_ascii=False),message=message)
         except asyncio.CancelledError:
             current=self.get(owner,ident)
             if current['status'] not in TERMINAL:
                 self.update(ident,status='needs_review' if current['inflight'] else 'paused',message='执行中断，提交结果待确认' if current['inflight'] else '已暂停，未完成步骤可继续')
         except Exception as exc:
             current=self.get(owner,ident)
-            uncertain=(current['inflight'] or isinstance(exc,ResultUncertain)) and not isinstance(exc,PostingRejected)
+            uncertain=bool(current['inflight'] or isinstance(exc,ResultUncertain))
             message=str(exc)[:240]
-            for secret in (self.media.pexels_key(),self.media.ai_key()):
-                if secret: message=message.replace(secret,'[已隐藏]')
             saved=json.loads(current['result_json'])
-            if saved.get('published')==1 and current['status']=='completed':
-                saved['post_publish']={'note':'已发布；后续处理未完成：'+message}
-                self.update(ident,result_json=json.dumps(saved,ensure_ascii=False),message=saved['post_publish']['note'])
-            else:
-                saved['failure']={'stage':current['message'],'message':message,'at':isoformat(),'result_uncertain':bool(uncertain)}
-                self.update(ident,status='needs_review' if uncertain else 'failed',inflight=1 if uncertain else 0,result_json=json.dumps(saved,ensure_ascii=False),message=message)
+            saved['failure']={'stage':current['message'],'message':message,'at':isoformat(),'result_uncertain':uncertain}
+            self.update(ident,status='needs_review' if uncertain else 'failed',inflight=1 if uncertain else 0,result_json=json.dumps(saved,ensure_ascii=False),message=message)
         finally:
             async def cleanup():
                 if kind=='nurture' and result.get('nurture_started_at'):
@@ -783,9 +696,8 @@ class StudioManager:
                     current=self.get(owner,ident)
                     if current['status']=='completed':
                         saved=json.loads(current['result_json'])
-                        note=saved.get('post_publish',{}).get('note','')
                         message='执行已完成；窗口关闭失败，请手动关闭' if close_failed else '已完成，窗口已关闭并释放'
-                        self.update(ident,message=message+('；'+note if note else ''))
+                        self.update(ident,message=message)
             # Shutdown can arrive after the result is saved but before disconnect.
             # Do not allow cancellation to interrupt the owned window cleanup.
             from .async_cleanup import finish_owned
@@ -821,15 +733,14 @@ class StudioManager:
 
     def snapshot(self, owner):
         with self.db.read() as c:
-            from .posting_account_stats import account_stats
+            from .account_profile_stats import account_stats
             window_stats=account_stats(c,owner)
-            assigned_drafts=[r[0] for r in c.execute("SELECT source_draft_id FROM studio_jobs WHERE owner_user_id=? AND source_draft_id<>''",(owner,))]
             # Always expose unfinished rounds, including an old paused queue head.
             # Bound only historical rows so they cannot hide actionable work.
-            jobs=[dict(r) for r in c.execute("SELECT rowid AS queue_order,* FROM studio_jobs WHERE owner_user_id=? AND deleted_at IS NULL AND status NOT IN ('completed','cancelled') ORDER BY created_at DESC,rowid DESC",(owner,))]
+            jobs=[dict(r) for r in c.execute("SELECT rowid AS queue_order,* FROM studio_jobs WHERE owner_user_id=? AND kind='nurture' AND deleted_at IS NULL AND status NOT IN ('completed','cancelled') ORDER BY created_at DESC,rowid DESC",(owner,))]
             # A removed failed nurture round leaves the actionable list but
             # retains its original outcome and receipts in bounded history.
-            jobs += [dict(r) for r in c.execute("""SELECT rowid AS queue_order,* FROM studio_jobs WHERE owner_user_id=?
+            jobs += [dict(r) for r in c.execute("""SELECT rowid AS queue_order,* FROM studio_jobs WHERE owner_user_id=? AND kind='nurture'
                 AND ((deleted_at IS NULL AND status IN ('completed','cancelled'))
                     OR (deleted_at IS NOT NULL AND kind='nurture' AND (status='failed'
                         OR (status='completed' AND json_extract(result_json,'$.window_cleanup.state')='reconciled_closed'))))
@@ -838,10 +749,9 @@ class StudioManager:
             # older than the history page or its historical card was archived.
             visible={row['id'] for row in jobs}
             jobs += [dict(r) for r in c.execute("SELECT rowid AS queue_order,* FROM studio_jobs WHERE owner_user_id=? AND kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1 ORDER BY created_at DESC,rowid DESC",(owner,)) if r['id'] not in visible]
-            assets=[dict(r) for r in c.execute("SELECT id,source,name,path,media_type,preview,attribution,source_url,created_at FROM studio_assets WHERE owner_user_id=? AND path<>'' ORDER BY created_at DESC LIMIT 100",(owner,))]
-            templates={r['kind']:json.loads(r['config_json']) for r in c.execute('SELECT * FROM studio_templates WHERE owner_user_id=?',(owner,))}
-            totals=[dict(r) for r in c.execute('SELECT kind,status,count(*) AS count FROM studio_jobs WHERE owner_user_id=? AND deleted_at IS NULL GROUP BY kind,status',(owner,))]
-            daily=[dict(r) for r in c.execute("SELECT substr(updated_at,1,10) AS day,kind,count(*) AS count FROM studio_jobs WHERE owner_user_id=? AND status='completed' GROUP BY day,kind ORDER BY day DESC LIMIT 90",(owner,))]
+            templates={r['kind']:json.loads(r['config_json']) for r in c.execute("SELECT * FROM studio_templates WHERE owner_user_id=? AND kind='nurture'",(owner,))}
+            totals=[dict(r) for r in c.execute("SELECT kind,status,count(*) AS count FROM studio_jobs WHERE owner_user_id=? AND kind='nurture' AND deleted_at IS NULL GROUP BY kind,status",(owner,))]
+            daily=[dict(r) for r in c.execute("SELECT substr(updated_at,1,10) AS day,kind,count(*) AS count FROM studio_jobs WHERE owner_user_id=? AND kind='nurture' AND status='completed' GROUP BY day,kind ORDER BY day DESC LIMIT 90",(owner,))]
             monitor=dict(c.execute('SELECT COALESCE(sum(added_count),0) AS added,COALESCE(sum(repeat_count),0) AS repeated FROM follow_monitor_daily_counts WHERE owner_user_id=?',(owner,)).fetchone())
             locked={r[0] for r in c.execute('SELECT profile_id FROM browser_operation_leases')}
             locked.update(r[0] for r in c.execute("SELECT profile_id FROM studio_jobs WHERE kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1"))
@@ -853,10 +763,6 @@ class StudioManager:
         usage={}
         for ident,meta in self.task_meta.items():
             if ident in active:usage[meta]=usage.get(meta,0)+1
-        for asset in assets:
-            selected_path=self.media.files.selection_path(owner,asset)
-            asset['desktop_path']=str(selected_path) if selected_path.is_file() else ''
-            asset.pop('path')
         for j in jobs:
             try:
                 cfg=json.loads(j.pop('config_json'))
@@ -885,8 +791,8 @@ class StudioManager:
                     reason,message='ready','已到执行时间，等待调度启动'
                 j['wait_reason']=reason;j['wait_message']=message
             j.pop('owner_user_id',None);j.pop('request_key',None)
-        return {'assigned_draft_ids':assigned_drafts,'window_stats':window_stats,'jobs':jobs,'assets':assets,'templates':templates,'totals':totals,'daily':daily,'monitor_totals':monitor,
-                'credentials':{'pexels_configured':bool(self.media.pexels_key()),'ai_configured':bool(self.media.ai_key())},'active_ids':[j['id'] for j in jobs if j['id'] in active],
+        return {'window_stats':window_stats,'jobs':jobs,'templates':templates,'totals':totals,'daily':daily,'monitor_totals':monitor,
+                'active_ids':[j['id'] for j in jobs if j['id'] in active],
                 'scheduler_error':self.scheduler_error}
 
     async def shutdown(self):

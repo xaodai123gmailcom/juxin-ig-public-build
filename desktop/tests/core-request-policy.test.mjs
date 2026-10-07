@@ -268,13 +268,9 @@ test('compact snapshots retain the same bounded GET-only IPC scope', () => {
   assert.equal(isAllowedCorePath('/api/workbench/snapshot?limit=5001&history_limit=2000&compact=1'),false);
 });
 
-test('posting bridge is narrow and never exposes internal credential activation', () => {
-  for (const path of ['/api/posting/snapshot','/api/posting/snapshot?timezone=UTC','/api/posting/snapshot?timezone=Asia%2FShanghai','/api/posting/snapshot?timezone=Etc%2FGMT%2B8','/api/posting/snapshot?timezone=UTC&cursor=WyJhIiwiYiJd&limit=50','/api/posting/snapshot?limit=200']) {
-    assert.equal(isAllowedCoreRequest(path,'GET'),true,path);
-    assert.equal(isAllowedCoreRequest(path,'POST'),false,path);
-  }
-  assert.equal(isAllowedCoreRequest('/api/posting/command','POST'),true);
-  assert.equal(isAllowedCoreRequest('/api/posting/command','GET'),false);
-  for (const path of ['/api/internal/integrations/pexels','/api/posting/snapshot?limit=0','/api/posting/snapshot?limit=201','/api/posting/snapshot?limit=1&limit=2','/api/posting/snapshot?cursor=abc%2Fdef','/api/posting/snapshot?cursor=abc&owner=other','/api/posting/snapshot?owner=other','/api/posting/snapshot?timezone=UTC&timezone=UTC','/api/posting/snapshot?timezone=UTC&key=secret','/api/posting/snapshot?timezone=..%2FUTC','/api/posting/command?owner=other'])
+test('retired posting and Pexels routes are rejected for every renderer method', () => {
+  for (const path of ['/api/posting/snapshot','/api/posting/snapshot?timezone=UTC','/api/posting/snapshot?cursor=abc&limit=50','/api/posting/command','/api/internal/integrations/pexels']) {
+    assert.equal(isAllowedCorePath(path),false,path);
     for (const method of ['GET','POST']) assert.equal(isAllowedCoreRequest(path,method),false,path);
+  }
 });

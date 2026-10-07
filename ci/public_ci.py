@@ -44,7 +44,7 @@ def contracts():
     run_owned('contract-owned-process-wait-diagnostics', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_owned_process_wait_diagnostics.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
-                 'test-r64-crop-proof.py', 'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
+                 'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
                  'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py'):
         run_owned('contract-' + name.replace('_', '-').replace('.', '-'),
                   [sys.executable, '-I', '-X', 'utf8', str(ROOT / 'ci' / name), '-v'], 180)
@@ -98,7 +98,15 @@ def installed():
     state = verify_run_state()
     require(read_json(state_root() / 'build-result.json')['status'] == 'passed', 'Full build did not pass')
     validate_source_build(state)
-    run_owned('actual-installed-product-acceptance', powershell('ci/public_ci_verify_installed.ps1'), 3600)
+    try:
+        run_owned('actual-installed-product-acceptance', powershell('ci/public_ci_verify_installed.ps1'), 3600)
+    except Exception:
+        # The nested verifier catches its error before PowerShell reports the
+        # nonzero child. Read only its exact runner-local combined stream, then
+        # retain the original failed gate and all acceptance requirements.
+        save_failure_diagnostic('installed-recovery-child', paths=(
+            ROOT / 'installer-output/installed-recovery-r64-stdout-full.log',))
+        raise
     runpy.run_path(str(ROOT / 'ci/public_ci_validate_installed.py'))
     return installed_hashes()
 

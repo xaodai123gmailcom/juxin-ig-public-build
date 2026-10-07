@@ -1,3 +1,4 @@
+import {accountWindowReconciliationEligible,accountWindowReconciliationReady} from '../src/account-window-reconciliation.ts';
 import {shareUnchangedJson} from '../src/snapshot-sharing.ts';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -24,7 +25,7 @@ function mountWorkspace(client,{initial=data(),source=snapshot(),popup=()=>Promi
   const sameDeps=(a,b)=>a&&b&&a.length===b.length&&a.every((value,i)=>Object.is(value,b[i]));
   const props={snapshot:source,onChanged:async()=>{}};
   const render=runInNewContext(stripTypeScriptTypes(code)+'\n() => AccountWorkspace(props);',{
-    props,createViewSnapshotReader,shareUnchangedJson,
+    accountWindowReconciliationEligible,accountWindowReconciliationReady,props,createViewSnapshotReader,shareUnchangedJson,
     useState(value){const slot=stateIndex++,name=names[slot];if(!(slot in states))states[slot]=name==='data'?initial:name==='checked'?new Set(['a','b']):typeof value==='function'?value():value;
       return[states[slot],next=>{states[slot]=typeof next==='function'?next(states[slot]):next;writes.push({name,value:states[slot]})}]},
     useRef(value){const slot=refIndex++;return refs[slot]||=( {current:value})},

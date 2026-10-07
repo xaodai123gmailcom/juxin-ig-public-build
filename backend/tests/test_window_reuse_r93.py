@@ -4,11 +4,11 @@ import json
 import unittest
 
 from app.playwright_worker import WorkerExecutionError
-from app.posting_account_stats import save_account_snapshot
+from app.account_profile_stats import save_account_snapshot
 from test_parallel_screening_worker import _Page, _connected_parent
 import test_hover_precheck_r61 as hover_cases
 import test_task_control_r27 as control_cases
-import test_posting_account_stats as stats_cases
+import test_account_profile_stats as stats_cases
 import test_parallel_relation_pipeline as pipeline_cases
 from test_parallel_relation_pipeline import (
     _PipelineManager, _NoopBitBrowser, _RelationParent, _PipelineState, _ScreeningChild,

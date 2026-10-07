@@ -150,9 +150,9 @@ def assert_browser_prerequisites(early, build):
     tree = ast.parse(early)
     selection = gate_call(tree, 'early-browser-selection')
     require('scripts/browser_build_policy.py' in ast.unparse(selection), 'Select actual installed Chrome before browser tests')
-    prechecks = [gate_call(tree, label) for label in ('early-saturation-focused-precheck', 'early-crop-focused-precheck')]
+    prechecks = [gate_call(tree, label) for label in ('early-saturation-focused-precheck',)]
     require(all(selection.lineno < check.lineno for check in prechecks), 'Browser selection must precede early backend gates')
-    require("IGAC_TEST_CHROMIUM_EXECUTABLE=chrome" in early and "IGAC_POSTING_TEST_BROWSER=chrome" in early,
+    require("IGAC_TEST_CHROMIUM_EXECUTABLE=chrome" in early and "IGAC_REQUIRE_COLLECTION_BROWSER='1'" in early,
             'Early browser gates must receive selected installed Chrome')
     require(build.index('scripts\\browser_build_policy.py --candidate-output $EarlyChromeCandidatePath')
             < build.index('    Invoke-IgacInstagramThousandGate'), 'Select Chrome before early real-browser local gate')

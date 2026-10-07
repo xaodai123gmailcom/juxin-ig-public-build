@@ -10,7 +10,15 @@ export const requiredRendererReleaseCopy = Object.freeze([
   "立即重试",
 ]);
 
+export const retiredPublishingMarkers = Object.freeze([
+  'PostingWorkspace', 'posting-workspace', '/api/posting/', '/api/internal/integrations/pexels',
+  'confirmed_posting', 'Pexels', 'PEXELS_API_KEY',
+]);
+
 export function verifyRendererReleaseCopy(text, label) {
+  for (const marker of retiredPublishingMarkers) {
+    if (text.includes(marker)) throw new Error(`NewGen desktop verification failed: ${label} contains retired publishing marker: ${marker}`);
+  }
   for (const marker of ["部分列表显示最近", "前往设置", "界面 r94 / Core", "刷新页面"]) {
     if (text.includes(marker)) throw new Error(`NewGen desktop verification failed: ${label} contains retired shell marker: ${marker}`);
   }

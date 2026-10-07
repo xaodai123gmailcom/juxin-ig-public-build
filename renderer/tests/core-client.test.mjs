@@ -620,19 +620,8 @@ console.log("formal Core renderer adapter: ok");
 }
 
 {
-  const calls=[];
-  const client=createCollectorCoreClient(bridge(async(path,options)=>{calls.push({path,options});return {ok:true};}));
-  await client.postingSnapshot('Asia/Shanghai');
-  await client.postingCommand({action:'start',job_ids:['job-one']});
-  assert.equal(calls[0].path,'/api/posting/snapshot?timezone=Asia%2FShanghai');
-  assert.equal(calls[1].path,'/api/posting/command');
-  assert.equal(calls[1].options.method,'POST');
-  assert.deepEqual(calls[1].options.body,{action:'start',job_ids:['job-one']});
+  const client = createCollectorCoreClient(bridge(async()=>({})));
+  assert.equal('postingSnapshot' in client, false);
+  assert.equal('postingCommand' in client, false);
 }
 
-{
-  const calls=[];
-  const client=createCollectorCoreClient(bridge(async(path,options)=>{calls.push({path,options});return {ok:true};}));
-  await client.postingSnapshot('UTC','WyJhIiwiYiJd',50);
-  assert.equal(calls[0].path,'/api/posting/snapshot?timezone=UTC&cursor=WyJhIiwiYiJd&limit=50');
-}

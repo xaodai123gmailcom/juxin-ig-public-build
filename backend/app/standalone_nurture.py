@@ -116,7 +116,7 @@ class StandaloneNurture:
         try:
             await self.browser.checkpoint()
             await self.progress('正在打开任务主页')
-            await self.browser.worker.open_posting_page()
+            await self.browser.worker.open_account_home_page()
             await prepare_instagram_home(self.page,self.browser.checkpoint)
             await self.browser.guard()
             await self.progress('正在核验当前登录账号')

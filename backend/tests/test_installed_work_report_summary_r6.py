@@ -14,10 +14,10 @@ class InstalledWorkReportSummaryTests(unittest.TestCase):
     def setUp(self):
         self.summary = {'platform': 'instagram', 'start': '2026-10-01T00:00:00+00:00',
                         'end': '2026-10-02T00:00:00+00:00',
-                        'totals': {'collection': 441552, 'follow': 0, 'split': 0, 'added': 0, 'confirmed_posting': 0}}
+                        'totals': {'collection': 441552, 'follow': 0, 'split': 0, 'added': 0}}
         self.full = {**copy.deepcopy(self.summary), 'rows': [{'profile_id': 'fixture', 'collection': 441552}],
                      'unattributed': 441552}
-        self.full['totals'].update(check=0, nurture=0, posting=0, greet=0, approved=0)
+        self.full['totals'].update(check=0, nurture=0, greet=0, approved=0)
 
     def invoke(self, summaries=None, full=None):
         summaries = copy.deepcopy(summaries if summaries is not None else [self.summary, self.summary])
@@ -74,9 +74,17 @@ class InstalledWorkReportSummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'legacy path disagrees'):
             self.invoke(full=full)
 
+    def test_removed_posting_fields_are_rejected_in_full_reports(self):
+        for field in ('posting', 'confirmed_posting'):
+            for location in ('totals', 'row'):
+                full = copy.deepcopy(self.full)
+                (full['totals'] if location == 'totals' else full['rows'][0])[field] = 0
+                with self.subTest(field=field, location=location), self.assertRaises(RuntimeError):
+                    self.invoke(full=full)
+
     def test_legacy_index_upgrade_probe_requires_positive_exact_totals_and_csv_rows(self):
         expected = {'start': '2026-10-03T00:00:00+08:00', 'end': '2026-10-04T00:00:00+08:00',
-                    'totals': {'collection': 3, 'follow': 1, 'split': 3, 'added': 7, 'confirmed_posting': 1}}
+                    'totals': {'collection': 3, 'follow': 1, 'split': 3, 'added': 7}}
         def request(path, **kwargs):
             self.assertEqual('/api/reports/query', path)
             value = {'totals': copy.deepcopy(expected['totals'])}

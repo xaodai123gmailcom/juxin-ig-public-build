@@ -137,7 +137,7 @@
 .report-periods .formal-button { min-height: 34px; }
 .report-periods .formal-button:not(.primary) { border-color: transparent; background: transparent; }
 .report-toolbar .formal-field { min-width: 155px; }
-.report-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: 14px; min-width: 0; }
+.report-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 1fr; align-items: stretch; gap: 14px; min-width: 0; }
 .report-card { --report-accent: #b9a4ff; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 32px 44px 18px; align-items: start; gap: 8px; min-width: 0; min-height: 149px; padding: 18px; box-sizing: border-box; container-type: inline-size; border: 1px solid #433e62; border-top: 2px solid var(--report-accent); border-radius: 15px; background: linear-gradient(125deg, #24213a, #121d30); }
 .report-card > span { min-width: 0; color: #c0cde0; font-size: 13px; line-height: 16px; overflow-wrap: anywhere; }
 .report-card > strong { min-width: 0; width: 100%; height: 44px; color: #f0f4ff; font-size: min(36px, calc(150cqw / var(--report-value-length, 6))); line-height: 44px; font-weight: 650; letter-spacing: -.035em; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -145,7 +145,6 @@
 .report-collection { --report-accent: #82baff; border-color: #355379; background: linear-gradient(125deg, #192d48, #121d30); }
 .report-split { --report-accent: #76d3c4; border-color: #325b61; background: linear-gradient(125deg, #173237, #121d30); }
 .report-added { --report-accent: #e3b989; border-color: #68523f; background: linear-gradient(125deg, #352831, #121d30); }
-.report-posting { --report-accent: #d89fca; border-color: #61435f; background: linear-gradient(125deg, #30233a, #121d30); }
 .report-card { border-top-color: var(--report-accent); }
 .report-table-scroll { max-height: 65vh; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border-top: 1px solid #293c56; }
 .report-table-scroll table { min-width: 950px; width: 100%; }

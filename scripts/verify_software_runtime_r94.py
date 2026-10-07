@@ -34,7 +34,6 @@ BROWSER_CLASSES = {
     "test_relation_dom_r51.RelationDOMR51Tests",
     "test_source_completion_r44.SourceScrollerDOMR44Tests",
     "test_zero_profile_reader_r45.ZeroProfileReaderR45Tests",
-    "test_posting_dom.PostingDOMTests", "test_posting_dom.ScreenshotPostingTests",
     "test_location_readiness_r45.LocationReadinessR45Tests",
     "test_relation_surface_r51.RelationSurfaceR51Tests",
     "test_zero_pipeline_r45.ZeroPipelineR45Tests",

@@ -222,18 +222,15 @@ class StabilityPersistenceTests(unittest.IsolatedAsyncioTestCase):
         snapshot=self.m.snapshot(self.owner)
         self.assertIn(ident,[j['id'] for j in snapshot['jobs']]);self.assertEqual(501,len(snapshot['jobs']))
 
-    async def test_r13_r15_r17_restore_spool_old_job_and_repair_corrupt_existing_media(self):
+    async def test_r13_r15_r17_restore_spool_and_old_nurture_job(self):
         ident=(await self.start(kind='nurture',config={'minutes':1}))['job_ids'][0]
         task=self.s.create_task(self.owner,name='spool',targets=['source'],modes=['followers'],settings={})
         self.s.append_task_mode_candidates(self.owner,task['id'],task['targets'][0]['id'],'followers',['alpha','beta'])
         payload,_=export_workspace(self.db,self.owner,self.tmp.name)
         payload=cloud_fixtures.NativeCloudTests.rewrite(self,payload,lambda data:[row.pop(key,None) for row in data['tables']['studio_jobs'] for key in ('deleted_at','source_draft_id','draft_target_profile_id')])
         dest=Database(Path(self.tmp.name)/'restore.sqlite');dest.initialize();s=CoreService(dest);owner=s.register_user('restore-owner','valid password for restore')['id']
-        content=Path(self.m.media.get(self.owner,self.asset)['path']).read_bytes()
-        root=Path(self.tmp.name)/'restore';expected=root/'cloud-media'/owner/(hashlib.sha256(content).hexdigest()+'.jpg')
-        expected.parent.mkdir(parents=True);expected.write_bytes(b'corrupt')
+        root=Path(self.tmp.name)/'restore'
         import_workspace(dest,owner,root,payload)
-        self.assertEqual(content,expected.read_bytes())
         with dest.read() as c:
             self.assertEqual(2,c.execute('SELECT COUNT(*) FROM task_mode_candidates').fetchone()[0])
             self.assertEqual(2,c.execute('SELECT pending FROM task_mode_candidate_counters').fetchone()[0])

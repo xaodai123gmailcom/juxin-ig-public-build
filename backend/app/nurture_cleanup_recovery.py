@@ -9,6 +9,7 @@ import json
 
 from .errors import ConflictError, NotFoundError, UpstreamUnavailableError
 from .service import isoformat
+from .posting_retirement import legacy_profile_hold
 
 
 def _active(manager, ident, profile):
@@ -44,7 +45,7 @@ def _eligible(manager, connection, owner, ident):
     # owned by another user or infer expiry from a timestamp.
     if connection.execute('SELECT 1 FROM browser_operation_leases WHERE profile_id=?', (profile,)).fetchone():
         raise ConflictError('窗口仍有占用凭证，请等待当前任务释放')
-    unfinished = connection.execute("""SELECT id,owner_user_id,status,kind FROM studio_jobs job WHERE profile_id=? AND id<>?
+    unfinished = connection.execute("""SELECT id,owner_user_id,status,kind FROM studio_jobs job WHERE profile_id=? AND id<>? AND kind='nurture'
         AND (status NOT IN ('completed','failed','cancelled') OR inflight=1 OR EXISTS (
             SELECT 1 FROM json_each(job.result_json,'$.nurture_actions') action
             WHERE COALESCE(json_extract(action.value,'$.state'),'') NOT IN ('confirmed','not_executed'))) LIMIT 1""", (profile, ident)).fetchone()
@@ -56,14 +57,13 @@ def _eligible(manager, connection, owner, ident):
         AND status NOT IN ('completed','failed','stopped','cancelled') LIMIT 1""", (profile,)).fetchone()
     monitors = connection.execute("""SELECT run.id,run.owner_user_id,run.status FROM follow_monitor_runs run,json_each(run.profile_ids_json) profile
         WHERE profile.value=? AND run.status IN ('queued','running','paused','cancelling') LIMIT 1""", (profile,)).fetchone()
-    posting = None
-    if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone():
-        posting = connection.execute("""SELECT id,owner_user_id,status FROM posting_jobs WHERE profile_id=?
-            AND (lease_token<>'' OR status NOT IN ('completed','failed','cancelled')) LIMIT 1""", (profile,)).fetchone()
+    if legacy_profile_hold(connection, profile):
+        raise ConflictError('窗口仍有历史操作待核验，请先核验历史窗口占用后重试',
+                            details={'reason': 'unresolved_window_hold'})
     blockers = [
-        ('studio', '养号' if unfinished and unfinished['kind'] == 'nurture' else '旧版发布', unfinished),
+        ('studio', '养号', unfinished),
         ('collection', '采集', collection or targets), ('action', '互动任务', actions),
-        ('monitor', '检查', monitors), ('posting', '发布', posting),
+        ('monitor', '检查', monitors),
     ]
     for module, label, blocker in blockers:
         if blocker is None:continue
@@ -72,11 +72,9 @@ def _eligible(manager, connection, owner, ident):
                                 details={'reason':'unfinished_workflow'})
         status = blocker['status']
         status_label = {'queued':'等待执行','waiting_window':'等待窗口','running':'正在执行',
-            'paused':'已暂停','ready':'待发布','prepared':'已备稿','review':'待审核',
+            'paused':'已暂停',
             'needs_review':'结果待确认','cancelling':'正在停止'}.get(status, status)
         route = f'请到“{label}”处理或停止该任务，再返回养号核验窗口清理'
-        if label == '旧版发布':
-            route = '这是旧版发布任务；请在历史记录核对该任务，并联系支持处理旧版未结束记录后再核验，勿删除登录资料'
         raise ConflictError(f'窗口仍有关联的{label}任务（{status_label}，任务编号 {blocker["id"]}）。{route}',
             details={'reason':'unfinished_workflow','module':module,'job_id':blocker['id'],
                      'status':status,'action':'resolve_existing_task_then_retry_cleanup'})

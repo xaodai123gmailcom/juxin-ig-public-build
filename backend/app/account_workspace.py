@@ -77,7 +77,7 @@ class AccountWorkspace:
         if self.opener:result=self.opener(provider,profile,platform,cookies)
         else:result=asyncio.run(open_platform_window(provider,profile,platform,cookies,inspect_instagram=True))
         if owner and isinstance(result,dict) and 'instagram_stats' in result:
-            from .posting_account_stats import save_account_snapshot
+            from .account_profile_stats import save_account_snapshot
             save_account_snapshot(self.db,owner,profile,result['instagram_stats'])
         return result
 
@@ -236,11 +236,9 @@ class AccountWorkspace:
                     if not current or current['profile_id']!=row['profile_id'] or current['revision']!=row['revision']:
                         raise ConflictError('窗口方案已变化，请刷新后再操作')
                     lease=c.execute('SELECT 1 FROM browser_operation_leases WHERE profile_id=? ',(row['profile_id'],)).fetchone()
-                    held_posting=(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='posting_jobs'").fetchone()
-                        and c.execute("SELECT 1 FROM posting_jobs WHERE profile_id=? AND lease_token<>'' LIMIT 1",(row['profile_id'],)).fetchone())
-                    # Translation deliberately has no transient account lease;
-                    # check the durable posting fence before any native IPC too.
-                    if lease or held_posting:raise ConflictError('任务占用，同步翻译已暂停')
+                    from .browser_admission import assert_no_durable_window_hold
+                    assert_no_durable_window_hold(c,owner,row['profile_id'])
+                    if lease:raise ConflictError('任务占用，同步翻译已暂停')
                 return native.chat_translation(owner,row['profile_id'],step)
         if action=='notes':
             notes=body.get('notes')
@@ -315,6 +313,9 @@ class AccountWorkspace:
         native.assert_owner(owner,row['profile_id'])
         with self.db.read() as c:
             lease=c.execute('SELECT lease_token,operation_type,entity_id FROM browser_operation_leases WHERE profile_id=? ',(row['profile_id'],)).fetchone()
+            from .posting_retirement import legacy_studio_lease_entities
+            retired=bool(lease and (lease['operation_type']=='posting' or
+                lease['operation_type']=='studio' and lease['entity_id'] in legacy_studio_lease_entities(c)))
             task=c.execute('SELECT settings_json FROM tasks WHERE id=? AND owner_user_id=?',
                 (lease['entity_id'],owner)).fetchone() if lease and lease['operation_type']=='collection' else None
         slot_count=0
@@ -322,7 +323,7 @@ class AccountWorkspace:
             configured=json.loads(task['settings_json']).get('parallel_screening_workers',1)
             slot_count=max(1,min(configured,3)) if type(configured) is int else 1
         result=native.bridge.call('watch-profile',profile=row['profile_id'],owner=owner,target=target,prefer_ready=not bool(target))
-        return {**result,'task_key':self.surface.task_key(lease),'operation':lease['operation_type'] if lease else None,
+        return {**result,'task_key':self.surface.task_key(lease),'operation':('account' if retired else lease['operation_type']) if lease else None,
                 'screening_slots':slot_count,
                 'manual_control':self.surface.manual_info(owner,row)}
 
@@ -374,7 +375,21 @@ class AccountWorkspace:
             events=[dict(r) for r in c.execute('SELECT name,action,created_at FROM account_window_events WHERE owner_user_id=? ORDER BY seq DESC LIMIT 100',(owner,))]
             dm={r['profile_id']:{'count':r['last_dm_count'],'checked_at':r['checked_at']} for r in c.execute('SELECT profile_id,last_dm_count,checked_at FROM follow_monitor_dm_accounts WHERE owner_user_id=?',(owner,))}
             following={r['profile_id']:{'username':r['username'],'count':r['following_count'],'checked_at':r['checked_at']} for r in c.execute('SELECT profile_id,username,following_count,checked_at FROM follow_monitor_accounts WHERE owner_user_id=?',(owner,))}
-            leases={r['profile_id']:dict(r) for r in c.execute('SELECT profile_id,operation_type FROM browser_operation_leases',())}
+            from .posting_retirement import legacy_studio_lease_entities, legacy_window_holds
+            retired_studio_ids=legacy_studio_lease_entities(c)
+            leases={}
+            actual_profiles=set()
+            for r in c.execute('SELECT profile_id,operation_type,owner_user_id,entity_id FROM browser_operation_leases'):
+                actual_profiles.add(r['profile_id'])
+                retired=(r['operation_type']=='posting' or r['operation_type']=='studio' and r['entity_id'] in retired_studio_ids)
+                leases[r['profile_id']]={'profile_id':r['profile_id'],'operation_type':'account' if retired else r['operation_type']}
+                if retired:
+                    leases[r['profile_id']].update(state='occupied',entity_id=None)
+                    if r['owner_user_id']==owner:leases[r['profile_id']]['can_reconcile_window_state']=True
+            for r in legacy_window_holds(c):
+                if r['profile_id'] in actual_profiles:continue
+                leases[r['profile_id']]={'profile_id':r['profile_id'],'operation_type':'account','state':'occupied','entity_id':None}
+                if r['owner_user_id']==owner:leases[r['profile_id']]['can_reconcile_window_state']=True
             # Durable cleanup receipts also block admission when their lease is
             # missing. Show the same occupancy the command path enforces.
             for r in c.execute("SELECT profile_id FROM studio_jobs WHERE kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1"):

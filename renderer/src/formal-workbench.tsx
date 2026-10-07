@@ -98,7 +98,6 @@ import "./review-stages-r54.css";
 import "./workbench-polish-r41.css";
 import { HomeWorkspace } from "./home-workspace";
 import { ReportsWorkspace, HistoryTotals } from "./reports-workspace";
-import { PostingWorkspace } from "./posting-workspace";
 import { StudioWorkspace } from "./studio-workspace";
 import { AccountWorkspace } from "./account-workspace";
 import { shareUnchangedJson } from "./snapshot-sharing";
@@ -106,7 +105,7 @@ import { historyPage, HISTORY_RENDER_PAGE_SIZE } from "./history-pagination";
 import { collectionOperationalHistoryRows, operationalHistoryGroups, operationalHistoryTypeLabel, type OperationalHistoryRow } from "./operational-history";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction, type FormEvent, type ReactNode } from "react";
 
-export type FormalWorkbenchMode = "home" | "reports" | "accounts" | "collection" | "review" | "public" | "private" | "follow-monitor" | "history" | "nurture" | "posting" | "settings";
+export type FormalWorkbenchMode = "home" | "reports" | "accounts" | "collection" | "review" | "public" | "private" | "follow-monitor" | "history" | "nurture" | "settings";
 
 export type FormalWorkbenchProps = {
   mode: FormalWorkbenchMode;
@@ -129,7 +128,6 @@ const PAGE_COPY: Record<FormalWorkbenchMode, { title: string; subtitle: string }
   reports: { title: "报表", subtitle: "" },
   accounts: { title: "账号", subtitle: "独立浏览器窗口 · 账号、窗口绑定与任务状态" },
   nurture: { title: "养号", subtitle: "模板、每日计划与多窗口执行" },
-  posting: { title: "发帖", subtitle: "素材、文案与多窗口发帖计划" },
   collection: { title: "采集任务", subtitle: "目标账号、窗口与采集顺序全部由本机 Core 统一调度" },
   review: { title: "人工审核", subtitle: "公开与私密队列分别审核，通过后自动进入对应结果页面" },
   public: { title: "公开页面 · 自动打招呼", subtitle: "仅处理审核通过的公开账号，多窗口自动分组执行" },
@@ -363,7 +361,6 @@ function truncatedSnapshotScopes(mode: FormalWorkbenchMode, snapshot: CoreWorkbe
     home: [],
     reports: [],
     nurture: [],
-    posting: [],
     history: [
       ["approval_history", "审核合格历史"],
       ["manual_rejection_history", "人工审核不合格历史"],
@@ -483,7 +480,6 @@ export function Rail({ mode, refresh, refreshing = false }: { mode: FormalWorkbe
     { mode: "accounts", label: "账号", icon: <UserRoundCheck size={22} /> },
     { mode: "follow-monitor", label: "检查", icon: <UserRoundCheck size={22} /> },
     { mode: "nurture", label: "养号", icon: <Leaf size={22} /> },
-    { mode: "posting", label: "发帖", icon: <Send size={22} /> },
     { mode: "collection", label: "采集", icon: <Users size={22} /> },
     { mode: "review", label: "审核", icon: <ShieldCheck size={22} /> },
     { mode: "public", label: "公开", icon: <MessageCircle size={22} /> },
@@ -3000,7 +2996,7 @@ function FollowMonitorWorkspace({ snapshot, disabled, refreshWindows }: Workspac
 
 function WorkbenchBody({ mode, snapshot, run, disabled, refresh, collectionControls, actionControls }: WorkspaceProps & { collectionControls: CollectionControls; actionControls: ActionControls; mode: FormalWorkbenchMode; refresh:()=>Promise<unknown> }) {
   const { platform } = useWorkbenchPlatform();
-  const instagramOnly = ["public","private","follow-monitor","posting","nurture"].includes(mode);
+  const instagramOnly = ["public","private","follow-monitor","nurture"].includes(mode);
   const visibleWindows = useMemo(() => instagramOnly
     ? snapshot.windows.filter(w=>!w.platform||w.platform==="instagram") : snapshot.windows, [instagramOnly, snapshot.windows]);
 
@@ -3009,7 +3005,6 @@ function WorkbenchBody({ mode, snapshot, run, disabled, refresh, collectionContr
   if (instagramOnly) {
     snapshot={...snapshot,windows:visibleWindows};
   }
-  if (mode === "posting") return <PostingWorkspace snapshot={snapshot} refreshWindows={refresh} />;
   if (mode === "nurture") return <StudioWorkspace key={mode} mode={mode} snapshot={snapshot} refreshWindows={refresh} />;
   if (mode === "collection") return <CollectionWorkspace snapshot={snapshot} run={run} disabled={disabled} collectionControls={collectionControls} />;
   if (mode === "review") return <StableReviewWorkspace snapshot={snapshot} run={run} disabled={disabled} />;

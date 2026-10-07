@@ -32,7 +32,7 @@ class CoreReleaseStartupR94Tests(unittest.TestCase):
             self.assertTrue(report['summary_legacy_totals_equal'])
             self.assertTrue(report['fixture_totals_verified'])
             self.assertTrue(report['repeated_summary_equal'])
-            self.assertEqual({'collection': 240, 'follow': 0, 'split': 0, 'added': 0, 'confirmed_posting': 0}, report['totals'])
+            self.assertEqual({'collection': 240, 'follow': 0, 'split': 0, 'added': 0}, report['totals'])
             self.assertLess(report['summary_bytes'], report['legacy_bytes'])
             for field in ('summary_first_seconds', 'summary_repeat_seconds', 'legacy_full_seconds'):
                 self.assertGreaterEqual(report[field], 0)
@@ -49,7 +49,7 @@ class CoreReleaseStartupR94Tests(unittest.TestCase):
                         'repeated_startup_idempotent'):
                 self.assertTrue(upgrade[key])
             self.assertEqual(2, upgrade['restart_count'])
-            self.assertEqual({'collection': 3, 'follow': 1, 'split': 3, 'added': 7, 'confirmed_posting': 1}, upgrade['five_card_totals'])
+            self.assertEqual({'collection': 3, 'follow': 1, 'split': 3, 'added': 7}, upgrade['four_card_totals'])
             self.assertGreater(upgrade['retained_rows']['browser_operation_leases']['rows'], 0)
             self.assertGreaterEqual(upgrade['retained_rows']['global_seen']['rows'], 324)
             self.assertEqual(2, len(upgrade['report_timings']))

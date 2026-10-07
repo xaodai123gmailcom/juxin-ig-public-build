@@ -57,9 +57,6 @@ if not "%RC%"=="0" (
   if exist "%~dp0installer-output\embedded-browser-failure.json" echo Also send installer-output\embedded-browser-failure.json.
   if exist "%~dp0installer-output\embedded-shell-failure.json" echo Also send installer-output\embedded-shell-failure.json.
   if exist "%~dp0installer-output\embedded-shell-failure.png" echo Also send installer-output\embedded-shell-failure.png.
-  if exist "%~dp0installer-output\embedded-posting-failure.json" echo Also send installer-output\embedded-posting-failure.json.
-  if exist "%~dp0installer-output\embedded-posting-failure.png" echo Also send installer-output\embedded-posting-failure.png.
-  if exist "%~dp0installer-output\posting-transition-r80-full.log" echo Also send installer-output\posting-transition-r80-full.log.
   if exist "%~dp0installer-output\pipeline-retained-r81-full.log" echo Also send installer-output\pipeline-retained-r81-full.log.
   if exist "%~dp0installer-output\embedded-account-surface.json" echo Also send installer-output\embedded-account-surface.json.
   if exist "%~dp0installer-output\embedded-account-surface.png" echo Also send installer-output\embedded-account-surface.png.

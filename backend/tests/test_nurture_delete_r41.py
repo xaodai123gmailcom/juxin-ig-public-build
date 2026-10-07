@@ -62,7 +62,7 @@ class NurtureDeleteR41Tests(unittest.TestCase):
             self.assertEqual([],self.browser.closed)
         asyncio.run(run())
 
-    def test_only_failed_nurture_is_removable_and_existing_posting_rule_stays_scoped(self):
+    def test_only_failed_nurture_is_removable_and_retired_commands_are_rejected(self):
         async def run():
             for status in ('queued','waiting_window','running','paused','needs_review','cancelled','completed'):
                 ident=await self.failed('guard-'+status,profile='guard-window-'+status)
@@ -73,12 +73,11 @@ class NurtureDeleteR41Tests(unittest.TestCase):
                     self.assertEqual([],reply['deleted_ids']);self.assertTrue(reply['skipped'])
                     self.assertEqual(before,self.stored(ident))
             for kind in ('posting','material'):
-                ident=(await self.start(kind,key='guard-kind-'+kind))['job_ids'][0]
-                self.m.update(ident,status='failed')
-                self.assertEqual([], (await self.remove(ident))['deleted_ids'])
-            nurture=await self.failed('guard-old-posting-rule')
-            result=await self.m.command(self.owner,{'action':'delete_unfinished','job_id':nurture})
-            self.assertEqual([],result['deleted_ids']);self.assertIsNone(self.stored(nurture)['deleted_at'])
+                with self.assertRaises(ValidationError):await self.start(kind,key='guard-kind-'+kind)
+            nurture=await self.failed('guard-retired-command')
+            with self.assertRaises(ValidationError):
+                await self.m.command(self.owner,{'action':'delete_unfinished','job_id':nurture})
+            self.assertIsNone(self.stored(nurture)['deleted_at'])
         asyncio.run(run())
 
     def test_inflight_and_unconfirmed_results_are_not_discarded(self):

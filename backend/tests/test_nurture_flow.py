@@ -1,7 +1,7 @@
 """Controlled browser nurture actions and durable counts; no live accounts."""
 import asyncio,json,unittest
 from unittest.mock import AsyncMock,patch
-import test_posting_dom as browser_fixtures
+from support import account_browser_fixture as browser_fixtures
 import test_studio as db_fixtures
 from app.instagram_nurture import NurtureInteractions
 from app.instagram_home import prepare_instagram_home
@@ -17,9 +17,9 @@ def legacy_interaction_config(**overrides):
 HTML='''<!doctype html><meta charset="utf-8"><nav><a href="/">首页</a></nav><main><article style="height:600px"><p>测试内容</p><button onclick="this.firstElementChild.setAttribute('aria-label','取消赞')"><svg aria-label="赞" width="30" height="30"><rect width="30" height="30"/></svg></button><button onclick="this.firstElementChild.setAttribute('aria-label','取消收藏')"><svg aria-label="收藏" width="30" height="30"><rect width="30" height="30"/></svg></button></article></main>'''
 
 class NurtureDOMTests(unittest.IsolatedAsyncioTestCase):
-    asyncSetUp=browser_fixtures.PostingDOMTests.asyncSetUp
-    asyncTearDown=browser_fixtures.PostingDOMTests.asyncTearDown
-    load_fixture=browser_fixtures.PostingDOMTests.load_fixture
+    asyncSetUp=browser_fixtures.AccountDOMFixture.asyncSetUp
+    asyncTearDown=browser_fixtures.AccountDOMFixture.asyncTearDown
+    load_fixture=browser_fixtures.AccountDOMFixture.load_fixture
 
     async def test_legacy_helper_new_home_dismisses_notice_confirms_actions_without_toggling_off(self):
         notice='<div role="dialog" style="position:fixed;top:50px;left:100px"><h2>打开通知</h2><button onclick="this.parentElement.remove()">以后再说</button></div>'
@@ -27,7 +27,7 @@ class NurtureDOMTests(unittest.IsolatedAsyncioTestCase):
         self.studio.wait=AsyncMock();self.studio.nurture_confirmed=AsyncMock()
         cfg=legacy_interaction_config(**{'like_limit':2,'like_probability':100,'save_limit':2,'save_probability':100})
         step={'surface':'feed','url':'https://www.instagram.com/','seconds':1}
-        await self.worker.open_posting_page()
+        await self.worker.open_account_home_page()
         await prepare_instagram_home(self.studio.page,self.studio.checkpoint)
         actions=NurtureInteractions(self.studio)
         counts=await actions.run(step,{},cfg)
@@ -59,7 +59,7 @@ class NurtureDOMTests(unittest.IsolatedAsyncioTestCase):
         await self.load_fixture(html)
         self.studio.wait=AsyncMock();self.studio.nurture_observation=AsyncMock()
         cfg=legacy_interaction_config(**{'like_probability':100,'like_limit':2,'save_probability':100,'save_limit':2,'follow_probability':100,'follow_limit':2,'comment_probability':100,'comment_limit':2,'comments':['本地评论']})
-        await self.worker.open_posting_page()
+        await self.worker.open_account_home_page()
         counts=await NurtureInteractions(self.studio).run({'surface':'feed'},{},cfg)
         self.assertEqual({'like':1,'save':1,'follow':1,'comment':1},counts)
         self.assertEqual('本地评论',await self.studio.page.locator('#messages').text_content())

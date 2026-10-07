@@ -52,7 +52,6 @@ test('explicit entry and both release paths enforce the browser contract', () =>
   assert.match(builder, /\$BrowserMode = "bundled"/);
   assert.match(builder, /--require-installed-chrome/);
   assert.match(builder, /\$env:IGAC_TEST_CHROMIUM_EXECUTABLE = \[string\]\$ChromeCandidate.executable/);
-  assert.match(builder, /\$env:IGAC_POSTING_TEST_BROWSER = \[string\]\$ChromeCandidate.executable/);
   assert.match(builder, /BROWSER_MODE=\$BrowserMode/);
   assert.equal(JSON.parse(read('package.json')).build.afterPack, 'scripts/verify_packaged_browser_policy.cjs');
   assert.match(read('scripts/build_portable_windows.ps1'), /verify_packaged_browser_policy.cjs/);

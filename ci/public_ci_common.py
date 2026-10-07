@@ -22,22 +22,31 @@ REPOSITORY = {'full_name': 'xaodai123gmailcom/juxin-ig-public-build',
               'id': '1406784621', 'owner_id': '337452708'}
 STAGES = ('contracts', 'early', 'build', 'installed')
 PUBLIC_FILES = ('run-summary.json', 'source-build-proof.json', 'installed-acceptance-proof.json')
-EARLY_FILES = ('r64-early-verification.json', 'r62-posting-viewport-native.json',
-    'r62-posting-viewport-native.png', 'r63-nurture-cleanup-native.json',
-    'r63-nurture-cleanup-native.png', 'r64-crop-icon-native.json', 'r64-crop-icon-native.png',
-    'r64-recovery-ui-native-proof.json', 'r64-recovery-ui-withdrawn-review.png',
+EARLY_FILES = ('r64-early-verification.json', 'r63-nurture-cleanup-native.json',
+    'r63-nurture-cleanup-native.png', 'r64-recovery-ui-native-proof.json',
     'r64-recovery-ui-hidden-blocker.png', 'r64-recovery-ui-stopped-feedback.png',
-    'r64-recovery-ui-fresh-review.png', 'final-seed-fixtures/final-seed-browser-r62.json',
+    'r64-recovery-ui-cleaned-window.png', 'final-seed-fixtures/final-seed-browser-r62.json',
     'final-seed-fixtures/final-seed-browser-r62.png')
 FINAL_IMAGES = ('r6-collection-counters.png', 'r6-work-report-summary.png', 'r6-work-report-data-overview.png',
     'r6-shell-wolf-accounts.png', 'r6-shell-wolf-collection.png', 'r6-shell-refresh-failure.png',
-    'r6-nurture-settings.png', 'r6-nurture-history.png', 'r6-nurture-narrow.png', 'r6-nurture-read-error.png',
-    'r6-posting-actual.png', 'r6-posting-stress.png', 'r62-posting-retry-actual.png')
+    'r6-nurture-settings.png', 'r6-nurture-history.png', 'r6-nurture-narrow.png', 'r6-nurture-read-error.png')
+
 
 
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def validate_posting_removal(proof):
+    """Require real frozen HTTP rejection at every retired route, without aliases."""
+    expected = {'verified': True, 'http_status': 404, 'endpoints': [
+        {'path': '/api/posting/snapshot', 'method': 'GET'},
+        {'path': '/api/posting/command', 'method': 'POST'},
+        {'path': '/api/internal/integrations/pexels', 'method': 'POST'},
+    ]}
+    require(same_json(proof, expected), 'Frozen retired-route rejection receipt is missing or changed')
+    return proof
 
 
 def same_json(left, right):
@@ -494,10 +503,10 @@ def preflight_installed_evidence():
     state = verify_run_state()
     output = ROOT / 'installer-output'
     current = tuple(name for name in EARLY_FILES if name not in (
-        'r64-early-verification.json', 'r62-posting-viewport-native.json', 'r62-posting-viewport-native.png')) + FINAL_IMAGES + (
+        'r64-early-verification.json',)) + FINAL_IMAGES + (
         'build-source.json', 'embedded-browser-check.json', 'installed-verification.json',
         'installed-scale-verification.json', 'installed-recovery-r64.json',
-        'parent-reels-fixtures/parent-reels-proof-r98.json', 'r6-posting-stress.json', 'r6-posting-stress-bounds.json')
+        'parent-reels-fixtures/parent-reels-proof-r98.json')
     started = read_json(state_root() / 'build-start.json')['started_ns']
     for name in current:
         checked_evidence(output / name)

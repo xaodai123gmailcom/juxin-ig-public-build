@@ -14,7 +14,7 @@ verifies its pinned SHA-256 before storing it in the current local application
 data directory under optional-integrations/immersive-translate.user.js.
 No automatic download, unknown-script execution, installation or paid signup occurs.
 Missing, incompatible or modified files leave translation unavailable with a
-clear message. Collection, posting and account nurture remain available.
+clear message. Collection and account nurture remain available.
 After import, explicitly enable translation and configure the desired provider.
 Any vendor prompts, account access, API settings and charges remain the user's choice.
 

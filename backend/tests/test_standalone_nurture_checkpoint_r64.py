@@ -41,8 +41,7 @@ class StandaloneNurtureCheckpointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            with patch('app.studio_files.desktop_root', return_value=directory / 'synthetic-desktop'):
-                asyncio.run(run(directory))
+            asyncio.run(run(directory))
 
     @staticmethod
     def change(fixture, statement, parameters=()):

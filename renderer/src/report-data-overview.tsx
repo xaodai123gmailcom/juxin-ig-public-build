@@ -19,7 +19,7 @@ type StudioOverview = {
 };
 type StudioOverviewState = {data: StudioOverview | null; error: string; loading: boolean};
 const emptyStudioState: StudioOverviewState = {data: null, error: "", loading: true};
-const kindText: Record<string, string> = {posting: "发帖", nurture: "养号", material: "备稿"};
+const kindText: Record<string, string> = {nurture: "养号"};
 const statusText: Record<string, string> = {
   queued: "等待执行", waiting_window: "等待窗口", running: "执行中", paused: "已暂停",
   cancelled: "已取消", completed: "已完成", failed: "失败", needs_review: "结果待确认",
@@ -37,7 +37,7 @@ export function validateStudioOverview(value: StudioOverview): StudioOverview {
       !value.daily.every(row => row && typeof row.day === "string" && typeof row.kind === "string" && actualCount(row.count))) {
     throw new Error("任务与检查统计不完整，请刷新数据概览重试");
   }
-  return value;
+  return {...value, totals: value.totals.filter(row => row.kind === "nurture"), daily: value.daily.filter(row => row.kind === "nurture")};
 }
 
 /** One reader belongs to one mounted overview. Disposal fences both success and failure. */
@@ -132,7 +132,6 @@ export function ReportDataOverview({snapshot, snapshotError, snapshotLoading, re
     {label: "累计检查新增", value: studio.data?.monitor_totals.added, loading: studio.loading},
     {label: "重复新增", value: studio.data?.monitor_totals.repeated, loading: studio.loading},
     {label: "已完成养号轮次", value: completed("nurture"), loading: studio.loading},
-    {label: "已确认发帖", value: completed("posting"), loading: studio.loading},
   ];
   // refreshSnapshot may intentionally swallow a polling error. Its authoritative
   // error prop remains visible even when that refresh promise resolves normally.
@@ -158,7 +157,7 @@ export function ReportDataOverview({snapshot, snapshotError, snapshotLoading, re
           <thead><tr><th scope="col">模块</th><th scope="col">状态</th><th scope="col">任务数</th></tr></thead>
           <tbody>{studio.data?.totals.map(row => <tr key={`${row.kind}:${row.status}`}><td>{kindText[row.kind] || row.kind}</td><td>{statusText[row.status] || row.status}</td><td>{row.count.toLocaleString("zh-CN")}</td></tr>)}</tbody>
         </table></div>
-        {tableState ? <p className="report-data-state" role="status">{tableState}</p> : !studio.data?.totals.length && <p className="report-data-state">暂无发帖或养号任务</p>}
+        {tableState ? <p className="report-data-state" role="status">{tableState}</p> : !studio.data?.totals.length && <p className="report-data-state">暂无养号任务</p>}
       </section>
       <section className="report-data-panel" aria-label="每日完成记录（UTC）">
         <h3>每日完成记录（UTC）</h3>

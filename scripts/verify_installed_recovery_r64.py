@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -36,7 +37,8 @@ core_probe = load_sibling('verify_frozen_core_service')
 require = fixture.require
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 PROOF_FILES = ('scripts/verify_installed_recovery_r64.py', 'scripts/recovery_upgrade_fixture_r64.py',
-    'scripts/nurture_cleanup_upgrade_fixture.py', 'scripts/fixtures/nurture_cleanup_upgrade_r62.sql')
+    'scripts/nurture_cleanup_upgrade_fixture.py', 'scripts/retired_posting_archive_oracle.py',
+    'scripts/fixtures/nurture_cleanup_upgrade_r62.sql')
 
 
 def source_binding():
@@ -49,9 +51,9 @@ def source_binding():
         'proof_files_sha256': {name: fixture.legacy.file_sha256(SOURCE_ROOT / name) for name in PROOF_FILES}}
 
 
-FLAGS = ('authenticated_api', 'unauthenticated_refused', 'foreign_owner_refused', 'legacy_startup_preserved',
-    'queued_withdraw', 'withdraw_audit_preserved', 'safe_posting_cleanup', 'assignment_required',
-    'stale_review_refused', 'fresh_reviewed_start', 'production_pre_browser_fence',
+FLAGS = ('authenticated_api', 'unauthenticated_refused', 'foreign_owner_refused',
+    'posting_endpoints_unavailable', 'legacy_archive_verified', 'idle_association_retired',
+    'active_owner_preserved',
     'hidden_task_absent_from_list', 'exact_hidden_task_located', 'stale_stop_refused',
     'normal_safe_stop', 'safe_collection_cleanup', 'material_history_dedup_preserved', 'no_share')
 
@@ -114,11 +116,6 @@ def exercise(api, directory, manifest, *, timeout=60):
         return value.get('body')
     def studio(action, name, **values):
         return {'action': action, 'job_id': fixture.JOBS[name], **values}
-    def post():
-        snapshot = request('/api/posting/snapshot')
-        return next(job for job in snapshot['jobs'] if job['id'] == fixture.POST)
-    def reviewed(job):
-        return {key: job[key] for key in ('id', 'caption', 'asset_id', 'profile_id', 'expected_username', 'queue_revision')}
     def resume(owner):
         result = request('/api/session/resume', {'session_token': manifest['tokens'][owner]})
         require(result['user']['id'] == owner, 'Authenticated identity mismatch')
@@ -126,47 +123,20 @@ def exercise(api, directory, manifest, *, timeout=60):
         while not predicate():
             require(time.monotonic() < deadline, label + ' timed out')
             time.sleep(.05)
-    request('/api/posting/snapshot', status=401, refusal='Missing application session token')
+    request('/api/studio/snapshot', status=401, refusal='Missing application session token')
     proof['unauthenticated_refused'] = True
     resume(fixture.OTHER)
-    request('/api/posting/command', {'action': 'withdraw', 'job_id': fixture.POST}, status=404, refusal='发帖任务不存在')
     request('/api/studio/command', studio('locate_cleanup_collection', 'collection'), status=404, refusal='任务不存在')
     resume(fixture.OWNER)
     proof['authenticated_api'] = proof['foreign_owner_refused'] = True
     startup = fixture.inspect(directory, manifest, phase='startup')
-    proof['legacy_startup_preserved'] = True
-    wait_for(lambda: post()['can_withdraw'] is True, 'Unclaimed original queue')
-    stale = reviewed(post())
-    request('/api/studio/command', studio('control', 'posting', operation='retry_cleanup'), status=409, refusal='窗口仍有关联的发布任务|窗口仍有活动任务')
-    # A real running scheduler can briefly claim then reject this old held
-    # queue between snapshot and click. Retry only its safe unclaimed refusal,
-    # within the same deadline and while the independent startup oracle holds.
-    withdraw_body = {'action': 'withdraw', 'job_id': fixture.POST}
-    while True:
-        require(time.monotonic() < deadline, 'Withdrawal admission timed out')
-        value = api('/api/posting/command', withdraw_body)
-        if value.get('ok') is True:
-            withdrawn = value['body']
-            responses.append({'path':'/api/posting/command', 'action':'withdraw', 'expected_status':200,
-                'observed_status':None if value.get('transport') == 'desktop-ipc' else 200, 'transport':value.get('transport','http')})
-            break
-        text = json.dumps(value.get('error', ''), ensure_ascii=False)
-        require((value.get('status') == 409 or value.get('transport') == 'desktop-ipc') and '仅可撤回尚未领取窗口、未执行且未提交的排队任务' in text, 'Unexpected withdrawal refusal')
-        fixture.inspect(directory, manifest, phase='startup')
-        time.sleep(.05)
-    require(withdrawn == {'withdrawn': fixture.POST, 'status': 'ready', 'requires_assignment': True, 'requires_review': True, 'will_repost': False}, 'Withdrawal response contract changed')
-    fixture.inspect(directory, manifest, phase='withdrawn')
-    proof['queued_withdraw'] = proof['withdraw_audit_preserved'] = proof['assignment_required'] = True
-    request('/api/posting/command', {'action': 'withdraw', 'job_id': fixture.POST}, status=409, refusal='仅可撤回尚未领取窗口、未执行且未提交的排队任务')
-    request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST], 'reviewed': [stale]}, status=409, refusal='任务内容在审阅后发生变化|任务排队记录在审阅后发生变化')
-    clean = request('/api/studio/command', studio('control', 'posting', operation='retry_cleanup'))
-    require(clean.get('cleanup_reconciled') is True and clean.get('cleanup_pending') is False, 'Posting cleanup is not an affirmative closed reconciliation')
-    fixture.inspect(directory, manifest, phase='cleaned')
-    proof['safe_posting_cleanup'] = True
-    assignment = {'action': 'assign', 'job_id': fixture.POST, 'profile_id': fixture.PROFILES['posting'], 'expected_username': fixture.USERNAME}
-    request('/api/posting/command', {**assignment, 'expected_username': 'unverified.fixture'}, status=422, refusal='目标账号与最近核验记录不符')
-    # Prove the hidden task through the same authenticated user session before
-    # starting the deliberately non-publishable post at the end of the proof.
+    proof['legacy_archive_verified'] = proof['idle_association_retired'] = proof['active_owner_preserved'] = True
+    for endpoint in core_probe.REMOVED_POSTING_ENDPOINTS:
+        body = None if endpoint['method'] == 'GET' else {'action': 'start', 'job_ids': [fixture.POST]}
+        # The desktop allowlist must reject these paths before HTTP. The frozen
+        # Core gate independently requires actual authenticated HTTP 404s.
+        request(endpoint['path'], body, status=404, refusal='不允许访问该本机接口|Not Found')
+    proof['posting_endpoints_unavailable'] = True
     listing = request('/api/workbench/snapshot?limit=1&history_limit=1&platform=instagram')
     require(not any(task['id'] == fixture.TASK for task in listing['tasks']), 'Dismissed historical task leaked back into the task list')
     proof['hidden_task_absent_from_list'] = True
@@ -179,7 +149,7 @@ def exercise(api, directory, manifest, *, timeout=60):
     request('/api/studio/command', {**stop, 'version': blocker['version'] - 1}, status=409, refusal='关联任务已变化，请重新定位后再确认')
     request('/api/studio/command', {**stop, 'task_id': 'wrong-target'}, status=409, refusal='关联任务已变化，请重新定位后再确认')
     request('/api/studio/command', {**stop, 'version': True}, status=422, refusal='请先定位关联任务，再确认停止当前版本')
-    fixture.inspect(directory, manifest, phase='cleaned')
+    fixture.inspect(directory, manifest, phase='startup')
     proof['stale_stop_refused'] = True
     result = request('/api/studio/command', stop)
     require(result['task_id'] == fixture.TASK and result['status'] == 'stopped' and result['cleanup_pending'] is True, 'Safe stop did not use normal task lifecycle')
@@ -189,24 +159,11 @@ def exercise(api, directory, manifest, *, timeout=60):
     clean = request('/api/studio/command', studio('control', 'collection', operation='retry_cleanup'))
     require(clean.get('cleanup_reconciled') is True, 'Hidden collection cleanup did not reconcile')
     proof['safe_collection_cleanup'] = True
-    request('/api/posting/command', assignment)
-    request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST], 'reviewed': [stale]}, status=409, refusal='任务内容在审阅后发生变化|任务排队记录在审阅后发生变化')
-    missing = dict(stale); missing.pop('queue_revision')
-    request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST], 'reviewed': [missing]}, status=409, refusal='任务排队记录在审阅后发生变化')
-    request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST]}, status=422, refusal='缺少已审阅内容')
-    fresh = reviewed(post())
-    require(fresh['queue_revision'] == 1, 'Fresh review reused the old queue generation')
-    request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST], 'reviewed': [{**fresh, 'caption': 'stale-content'}]}, status=409, refusal='任务内容在审阅后发生变化')
-    proof['stale_review_refused'] = True
-    result = request('/api/posting/command', {'action': 'start', 'job_ids': [fixture.POST], 'reviewed': [fresh]})
-    require(result == {'queued': [fixture.POST]}, 'Fresh reviewed start did not admit exactly one job')
-    proof['fresh_reviewed_start'] = True
-    wait_for(lambda: (lambda row: row['status'] == 'failed' and row['failure_code'] == 'material_unavailable' and not row['window_held'])(post()), 'Production pre-browser material fence')
     final = fixture.inspect(directory, manifest, phase='complete')
-    proof['production_pre_browser_fence'] = proof['material_history_dedup_preserved'] = proof['no_share'] = True
+    proof['material_history_dedup_preserved'] = proof['no_share'] = True
     require(not any(task['id'] == fixture.TASK for task in request('/api/workbench/snapshot?limit=1&history_limit=1&platform=instagram')['tasks']), 'Stop restored a dismissed task')
     return {'checks': proof, 'startup': startup, 'persisted_state': final, 'api_calls': responses,
-        'fresh_review': fresh, 'located_task': blocker, 'safety_fence': 'invalid-synthetic-render-digest-before-PlaywrightWorker'}
+        'located_task': blocker, 'safety_fence': 'posting-feature-removed-no-execution-or-owner-theft'}
 
 
 def exact_renderer(browser, app_root):
@@ -261,7 +218,7 @@ def validate_proof(proof, *, executable, core_executable, require_windows=True):
     expected_keys = {'verified', 'contract', 'platform', 'synthetic', 'live_accounts_tested', 'user_data_touched',
         'desktop', 'core', 'core_frozen', 'core_upgrade_manifest_sha256', 'seed_pid', 'seed_completed_perf_ns',
         'launch_perf_ns', 'ready_perf_ns', 'chronology_clock', 'manifest_sha256', 'input_database_sha256', 'nonce',
-        'normal_shutdown', 'manifest_unchanged', 'checks', 'startup', 'persisted_state', 'api_calls', 'fresh_review',
+        'normal_shutdown', 'manifest_unchanged', 'checks', 'startup', 'persisted_state', 'api_calls',
         'located_task', 'safety_fence', 'source_commit', 'source_manifest_sha256', 'proof_files_sha256', 'desktop_app_asar_sha256'}
     binding = source_binding()
     if 'source_provenance' in binding:
@@ -290,15 +247,22 @@ def validate_proof(proof, *, executable, core_executable, require_windows=True):
     require(proof.get('chronology_clock') == fixture.legacy.CHRONOLOGY_CLOCK and all(type(proof.get(k)) is int for k in ('seed_completed_perf_ns', 'launch_perf_ns', 'ready_perf_ns')) and 0 < proof['seed_completed_perf_ns'] < proof['launch_perf_ns'] < proof['ready_perf_ns'], 'Recovery launch chronology is not strict QPC ordering')
     require(type(proof.get('seed_pid')) is int and proof['seed_pid'] not in (proof['desktop']['pid'], proof['core']['pid']), 'Seed was not persisted by a separate process')
     require(proof.get('normal_shutdown') is True and proof.get('manifest_unchanged') is True, 'Recovery shutdown/input evidence is incomplete')
-    require(proof.get('safety_fence') == 'invalid-synthetic-render-digest-before-PlaywrightWorker', 'No-Share safety fence is missing')
-    for section, audits, revision in (('startup', 0, 0), ('persisted_state', 1, 2)):
+    require(proof.get('safety_fence') == 'posting-feature-removed-no-execution-or-owner-theft', 'No-Share safety fence is missing')
+    for section in ('startup', 'persisted_state'):
         state = proof.get(section, {})
-        require(state.get('verified') is True and state.get('no_submission') is True and type(state.get('posting_queue_revision')) is int and state['posting_queue_revision'] == revision and type(state.get('withdrawal_audits')) is int and state['withdrawal_audits'] == audits and type(state.get('historical_receipts')) is int and state['historical_receipts'] == 1 and type(state.get('protected_tables')) is int and state['protected_tables'] == len(fixture.PROTECTED) and type(state.get('login_files')) is int and state['login_files'] == 8, 'Recovery persisted-state evidence is incomplete')
+        numbers = {'historical_receipts': 1, 'protected_tables': len(fixture.PROTECTED),
+            'login_files': 8, 'retired_idle_associations': 1, 'quarantined_jobs': 1, 'preserved_active_leases': 1}
+        require(state.get('verified') is True and state.get('no_submission') is True and
+            all(type(state.get(key)) is int and state[key] == value for key, value in numbers.items()), 'Recovery persisted-state evidence is incomplete')
+        archive = state.get('archive', {})
+        require(archive.get('verified') is True and type(archive.get('archived_rows')) is int and archive['archived_rows'] == 5
+            and type(archive.get('copied_files')) is int and archive['copied_files'] == 1
+            and isinstance(archive.get('archive_rows_sha256'), str) and re.fullmatch('[a-f0-9]{64}', archive['archive_rows_sha256']), 'Recoverable archive evidence is incomplete')
+    require(proof['startup']['archive'] == proof['persisted_state']['archive'], 'Retired archive changed during recovery')
     require(proof['startup']['protected_sha256'] == proof['persisted_state']['protected_sha256'] and proof['startup']['material_sha256'] == proof['persisted_state']['material_sha256'], 'Material/history/dedup hashes differ')
     for key in ('manifest_sha256', 'input_database_sha256', 'nonce', 'core_upgrade_manifest_sha256'):
         require(isinstance(proof.get(key), str) and re.fullmatch('[a-f0-9]{64}', proof[key]), 'Recovery input binding missing: ' + key)
     require(isinstance(proof['api_calls'], list) and proof['api_calls'] and all(isinstance(call, dict) and set(call) == {'path', 'action', 'expected_status', 'observed_status', 'transport'} and call['transport'] == 'desktop-ipc' and call['expected_status'] in {200,401,404,409,422} and call['observed_status'] is None for call in proof['api_calls']), 'Recovery authenticated API transcript is invalid')
-    require(type(proof['fresh_review'].get('queue_revision')) is int and proof['fresh_review'] == {'id': fixture.POST, 'caption': fixture.CAPTION, 'asset_id': fixture.ASSET, 'profile_id': fixture.PROFILES['posting'], 'expected_username': fixture.USERNAME, 'queue_revision': 1}, 'Fresh reviewed tuple is not the post-withdrawal generation')
     located = proof['located_task']
     require(isinstance(located, dict) and located.get('task_id') == fixture.TASK and located.get('version') == 7 and located.get('status') == 'paused' and located.get('dismissed') is True and located.get('can_stop') is True and located.get('window_ids') == [fixture.PROFILES['collection']], 'Exact hidden blocker evidence changed')
     return proof
@@ -328,7 +292,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
         port, debug_port, blocked_proxy = reserve_port(), reserve_port(), reserve_port()
         env.update(COLLECTOR_CORE_PORT=str(port), IGAC_DB_PATH=str(data / 'collector.sqlite3'))
         # All browser web traffic is redirected to an unused loopback port. The
-        # seeded invalid render digest also refuses the job before browser open.
+        # retired feature has no publishing runtime; archival is checked separately.
         args = [str(executable), '--user-data-dir=' + str(user_data), '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + str(debug_port), '--proxy-server=http://127.0.0.1:' + str(blocked_proxy), '--proxy-bypass-list=localhost;127.0.0.1', '--disable-background-networking']
         with log_path.open('wb') as log:
             launch_perf_ns = time.perf_counter_ns()
@@ -362,7 +326,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                             catch(error) { const text=String(error);const match=text.match(/(?:请求失败[:：]\\s*|status[^0-9]*)([45][0-9]{2})/);return {ok:false,transport:'desktop-ipc',status:match?Number(match[1]):null,error:text}; }
                         }""", {'path': path, 'body': body})
                         return value
-                    while 'Missing application session token' not in str(api('/api/posting/snapshot').get('error', '')):
+                    while 'Missing application session token' not in str(api('/api/studio/snapshot').get('error', '')):
                         require(time.monotonic() < end, 'Installed Core did not become ready')
                         time.sleep(.1)
                     runtime = installed_core_process(process.pid, core_executable)
@@ -415,6 +379,14 @@ def main():
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     except Exception as error:
+        # The public CI wrapper keeps this complete stream on the runner and
+        # exports only sealed relative source locations/fixed error categories.
+        # Retain the active traceback so a failed installed gate is diagnosable
+        # without exporting exception messages, runtime paths or application data.
+        try:
+            traceback.print_exc(file=sys.stderr)
+        except Exception:
+            pass  # Diagnostic output cannot turn the failed proof into success.
         print('INSTALLED_RECOVERY_R64=FAIL ' + str(error), flush=True)
         return 1
     print('INSTALLED_RECOVERY_R64=PASS ' + json.dumps(proof, ensure_ascii=False, sort_keys=True), flush=True)

@@ -25,7 +25,7 @@ class RelationSurfaceR51Tests(unittest.IsolatedAsyncioTestCase):
         path = os.environ.get('IGAC_POSTING_TEST_BROWSER', '')
         if not path and not Path(self.p.chromium.executable_path).is_file():
             await self.p.stop()
-            if os.environ.get('IGAC_REQUIRE_POSTING_BROWSER') == '1':
+            if os.environ.get('IGAC_REQUIRE_COLLECTION_BROWSER') == '1':
                 self.fail('Required Chromium runtime is missing')
             self.skipTest('Chromium required for relation surface fixtures')
         self.browser = await self.p.chromium.launch(**({'executable_path':path} if path else {'channel':'chromium'}), headless=True, args=['--no-sandbox'])

@@ -23,14 +23,7 @@ class CleanupManagerRegistryTests(unittest.TestCase):
             self.assertTrue(check('w1'));self.assertFalse(check('other'))
         self.assertFalse(check('w1'))
 
-    def test_terminal_posting_still_draining_is_protected_without_current_lease(self):
+    def test_removed_posting_manager_is_not_constructed(self):
         app=self.app()
-        from app.posting_schema import initialize_posting_schema
-        with self.db.write() as c:
-            initialize_posting_schema(c)
-            c.execute('''INSERT INTO posting_jobs(id,owner_user_id,request_key,theme,caption,
-                profile_id,status,created_at,updated_at) VALUES('terminal-post',?,'terminal-post','fixture','fixture','w1','completed','2026-10-04','2026-10-04')''',(self.owner,))
-        check=app.state.studio.cleanup_profile_active
-        with patch.object(app.state.posting,'active_ids',return_value={'terminal-post'}):
-            self.assertTrue(check('w1'));self.assertFalse(check('other'))
-        self.assertFalse(check('w1'))
+        self.assertFalse(hasattr(app.state,'posting'))
+        self.assertFalse(app.state.studio.cleanup_profile_active('unrelated'))

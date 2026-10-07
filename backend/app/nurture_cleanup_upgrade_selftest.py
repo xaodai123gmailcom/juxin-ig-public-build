@@ -23,9 +23,9 @@ PROOF_PREFIX = 'NURTURE_CLEANUP_UPGRADE_SELFTEST=PASS '
 CONTRACT = 'nurture-orphan-hold-upgrade-v1'
 CHRONOLOGY_CLOCK = 'perf_counter_ns-system-v1'
 BASELINE_COMMIT = '252590e257fbbc0e1974ad727e2086ab858bb2c6'
-RECOVERED = ('closed_legacy', 'closed_lost', 'archived_closed')
+RECOVERED = ('closed_legacy', 'closed_lost', 'archived_closed', 'prepared_posting')
 RETAINED = ('open', 'opening', 'closing', 'successor_lease', 'fresh_account_lease', 'queued_collection', 'queued_studio',
-            'queued_monitor', 'queued_action', 'prepared_posting', 'unknown_action',
+            'queued_monitor', 'queued_action', 'unknown_action',
             'inflight', 'unknown_profile', 'foreign_profile_owner', 'unknown_state')
 
 
@@ -136,9 +136,6 @@ async def run_selftest(manifest_path):
             guard.enter_context(patch.object(socket.socket, name, forbidden_network))
         for name in ('create_connection', 'getaddrinfo', 'gethostbyname', 'gethostbyname_ex'):
             guard.enter_context(patch.object(socket, name, forbidden_network))
-        guard.enter_context(patch(__package__ + '.studio_files.desktop_root', return_value=directory / 'synthetic-desktop'))
-        guard.enter_context(patch(__package__ + '.studio_media.StudioMedia.pexels_key', return_value=''))
-        guard.enter_context(patch(__package__ + '.studio_media.StudioMedia.ai_key', return_value=''))
         guard.enter_context(patch(__package__ + '.studio.PlaywrightWorker', side_effect=forbidden_activity))
         guard.enter_context(patch(__package__ + '.native_browser._spawn_browser_process', side_effect=forbidden_activity))
         from .database import Database
@@ -150,7 +147,6 @@ async def run_selftest(manifest_path):
         from .errors import ConflictError, NotFoundError, UpstreamUnavailableError
         from .main import create_app
         from .config import Settings
-        from .posting_workflow import PostingManager
         from .follow_monitor import FollowMonitorManager
         startup_events = []
         def observe(cls, method, label):
@@ -161,13 +157,17 @@ async def run_selftest(manifest_path):
             guard.enter_context(patch.object(cls, method, call))
         for cls, method, label in ((Database, 'initialize', 'database.initialize'),
             (CoreService, 'recover_interrupted_operations', 'service.recover_interrupted_operations'),
-            (PostingManager, 'recover', 'posting.recover'),
             (FollowMonitorManager, 'recover_interrupted', 'monitor.recover_interrupted'),
             (StudioManager, 'recover', 'studio.recover'),
             (AccountWorkspace, 'recover', 'accounts.recover'),
-            (StudioManager, 'start_scheduler', 'studio.start_scheduler'),
-            (PostingManager, 'start_scheduler', 'posting.start_scheduler')):
+            (StudioManager, 'start_scheduler', 'studio.start_scheduler')):
             observe(cls, method, label)
+        from . import main as main_module
+        retire = main_module.retire_legacy_posting
+        def observe_retirement(*args, **kwargs):
+            startup_events.append('posting.retire_legacy')
+            return retire(*args, **kwargs)
+        guard.enter_context(patch.object(main_module, 'retire_legacy_posting', observe_retirement))
         db = Database(path)
         manager = None
         try:
@@ -179,7 +179,6 @@ async def run_selftest(manifest_path):
             app = create_app(settings, database=db, bitbrowser=provider)
             service = app.state.service
             manager = app.state.studio
-            manager.media.files.root = directory / 'synthetic-media'
             native.closing.add(manifest['cases']['closing']['profile_id'])
             native.connections['opening-ticket'] = {'profile': manifest['cases']['opening']['profile_id']}
             opened = []
@@ -226,7 +225,7 @@ async def run_selftest(manifest_path):
             require(sum(row['id'] == archived for row in manager.snapshot(manifest['owner'])['jobs']) == 1,
                     'archived held record is missing or duplicated before startup')
             queued_before = {}
-            for name in ('queued_collection', 'queued_studio', 'queued_monitor', 'queued_action', 'prepared_posting'):
+            for name in ('queued_collection', 'queued_studio', 'queued_monitor', 'queued_action'):
                 try:
                     await manager.control(manifest['owner'], manifest['cases'][name]['job_id'], 'retry_cleanup')
                 except ConflictError as error:
@@ -328,16 +327,13 @@ async def run_selftest(manifest_path):
                     elif table == 'browser_operation_leases':
                         require(actual == expected + [fresh_lease], 'changed a persistent or fresh successor lease')
                     elif table == 'posting_jobs':
-                        # The queue-withdrawal migration adds only a zero-valued
-                        # generation. Every pre-existing field remains exact.
-                        observed = [dict(row) for row in actual]
-                        revisions = [row.pop('queue_revision', None) for row in observed]
-                        require(all(type(value) is int and value == 0 for value in revisions),
-                                'historical posting queue generation was not initialized to zero')
-                        require(observed == expected, 'changed protected historical posting fields')
+                        require(actual == [row for row in expected if row['id'] == 'unrelated-job'],
+                                'changed quarantined posting ownership or retained idle association')
                     else:
                         require(actual == expected, 'changed dedupe, login, blocker or unrelated lock table: ' + table)
-                require(not rows(db, 'posting_withdraw_history'), 'startup manufactured a posting withdrawal')
+                with db.read() as check:
+                    if check.execute("SELECT 1 FROM sqlite_master WHERE name='posting_withdraw_history'").fetchone():
+                        require(not rows(db, 'posting_withdraw_history'), 'startup manufactured a posting withdrawal')
                 require(attempted == {'network': 0, 'activity': 0}, 'forbidden external effect was attempted')
                 runtime = {'pid': os.getpid(), 'frozen': bool(getattr(sys, 'frozen', False)),
                     'windows': os.name == 'nt', 'executable': str(Path(sys.executable).resolve()),
@@ -368,7 +364,7 @@ async def run_selftest(manifest_path):
                     'opened_perf_ns': opened_perf_ns,
                     'opened_ns': opened_ns, 'runtime': runtime, 'cases': cases, 'admission': admission}
             require(attempted == {'network': 0, 'activity': 0}, 'shutdown attempted an external effect')
-            require(db._instance_lock_file is None and manager.scheduler.done() and app.state.posting.scheduler.done(),
+            require(db._instance_lock_file is None and manager.scheduler.done() and not hasattr(app.state, 'posting'),
                     'normal lifespan shutdown did not release its process lock and stop schedulers')
             return proof
         finally:

@@ -28,7 +28,7 @@ test('unknown data never becomes zero and elapsed never comes from planned steps
 });
 test('actual nurture route uses simplified component with no fixed controls or legacy templates', () => {
   const router=readFileSync(new URL('../src/studio-workspace.tsx',import.meta.url),'utf8');
-  assert.match(router,/props\.mode==='nurture'\?<StandaloneNurtureWorkspace/);
+  assert.match(router,/return <StandaloneNurtureWorkspace/);assert.doesNotMatch(router,/LegacyStudioWorkspace/);
   const source=readFileSync(new URL('../src/standalone-nurture-workspace.tsx',import.meta.url),'utf8');
   assert.equal((source.match(/type="number"/g)||[]).length,2);
   assert.match(source,/config: \{minutes: Number\(minutes\), concurrency: Number\(concurrency\)\}/);

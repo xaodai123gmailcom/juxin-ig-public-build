@@ -26,5 +26,5 @@ contextBridge.exposeInMainWorld("collectorCore", {
   secureSet: (key: string, value: string) => ipcRenderer.invoke("secure:set", key, value),
   secureGet: (key: string) => ipcRenderer.invoke("secure:get", key),
   secureDelete: (key: string) => ipcRenderer.invoke("secure:delete", key),
-  configureIntegrations: (input: { bitbrowserPort?: number; bitbrowserApiKey?: string; openaiApiKey?: string; pexelsApiKey?: string; cloud?: {enabled:boolean;projectUrl:string;publishableKey:string} }) => ipcRenderer.invoke("core:configure", input)
+  configureIntegrations: (input: { bitbrowserPort?: number; bitbrowserApiKey?: string; openaiApiKey?: string; cloud?: {enabled:boolean;projectUrl:string;publishableKey:string} }) => ipcRenderer.invoke("core:configure", input)
 });

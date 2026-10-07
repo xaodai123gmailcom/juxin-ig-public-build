@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AuthGate } from "./auth-gate";
 import { FormalWorkbench, type FormalWorkbenchMode } from "./formal-workbench";
 
-function modeFromHash(hash: string): FormalWorkbenchMode {
+export function modeFromHash(hash: string): FormalWorkbenchMode {
   const route = hash.replace(/^#/, "").replace(/\/$/, "") || "/";
   if (route === "/" || route === "/home") return "home";
   if (route === "/collection") return "collection";
@@ -14,7 +14,6 @@ function modeFromHash(hash: string): FormalWorkbenchMode {
   if (route === "/follow-monitor") return "follow-monitor";
   if (route === "/history") return "history";
   if (route === "/nurture") return "nurture";
-  if (route === "/posting") return "posting";
   if (route === "/data") return "reports";
   if (route === "/settings") return "settings";
   return "home";

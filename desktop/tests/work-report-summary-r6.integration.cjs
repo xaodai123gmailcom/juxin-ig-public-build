@@ -17,7 +17,7 @@ import './renderer/src/workbench-polish-r55.css';
 import './renderer/src/workbench-density.css';
 import './renderer/src/workbench-r93.css';
 const fixture = {requests: [] as any[], downloads: [] as any[], holdSummary: true, holdExport: false,
-  summaryValues: {collection: 433, follow: 0, split: 2, added: 0, confirmed_posting: 7},
+  summaryValues: {collection: 433, follow: 0, split: 2, added: 0},
   failExport: false, holdStudio: false, releaseStudio: null as (() => void) | null, releaseSummary: null as (() => void) | null, releaseExport: null as (() => void) | null};
 Object.assign(window, {reportFixture: fixture});
 const blobs = new Map<string, Blob>();
@@ -34,7 +34,7 @@ HTMLAnchorElement.prototype.click = function() {
     item.text = text; item.bytes = Array.from(new Uint8Array(bytes).slice(0, 3)); item.ready = true;
   });
 };
-const zero = {follow: 0, greet: 0, split: 0, added: 0, posting: 0, collection: 0, check: 0, nurture: 0, approved: 0, confirmed_posting: 0};
+const zero = {follow: 0, greet: 0, split: 0, added: 0, collection: 0, check: 0, nurture: 0, approved: 0};
 const snapshot = {platform: 'instagram', revision: 1, generated_at: new Date().toISOString(),
   counts: {pending_public: 0, pending_private: 0, total_collected: 10000, total_public: 8000, total_private: 2000}, dedupe: {total: 9000}, pending: {public: [], private: []}, approved: {public: [], private: []},
   history: {manual_rejections: [], collection_exclusions: []}, windows: [], sources: [], tasks: [], campaigns: [], split_candidates: [],
@@ -51,9 +51,9 @@ const snapshot = {platform: 'instagram', revision: 1, generated_at: new Date().t
     fixture.requests.push({path, body: structuredClone(body)});
     if (path === '/api/studio/snapshot') {
       if (fixture.holdStudio) {fixture.holdStudio = false; await new Promise<void>(resolve => fixture.releaseStudio = resolve); fixture.releaseStudio = null}
-      return {jobs: [], assets: [], templates: {}, active_ids: [], credentials: {pexels_configured: false, ai_configured: false},
-        monitor_totals: {added: 17, repeated: 3}, totals: [{kind: 'nurture', status: 'completed', count: 11}, {kind: 'posting', status: 'completed', count: 7}, {kind: 'nurture', status: 'failed', count: 2}],
-        daily: [{day: '2026-03-08', kind: 'nurture', count: 11}, {day: '2026-03-08', kind: 'posting', count: 7}]};
+      return {jobs: [], assets: [], templates: {}, active_ids: [], credentials: {ai_configured: false},
+        monitor_totals: {added: 17, repeated: 3}, totals: [{kind: 'nurture', status: 'completed', count: 11}, {kind: 'nurture', status: 'failed', count: 2}],
+        daily: [{day: '2026-03-08', kind: 'nurture', count: 11}]};
     }
     if (path === '/api/reports/query') {
       if (body.platform !== 'instagram' || body.kind !== 'activity') throw Error('Unexpected report scope');
@@ -89,7 +89,7 @@ const stateScript = `(() => ({
   tabs: [...document.querySelectorAll('.report-workspace-tabs button')].map(node => node.textContent.trim())
 }))()`;
 function assertSummaryState(state) {
-  assert.deepEqual(state.cards, [{label: '采集总数', value: '433'}, {label: '私密点关注成功数', value: '0'}, {label: '分裂数量', value: '2'}, {label: '新增数量', value: '0'}, {label: '发帖数量', value: '7'}]);
+  assert.deepEqual(state.cards, [{label: '采集总数', value: '433'}, {label: '私密点关注成功数', value: '0'}, {label: '分裂数量', value: '2'}, {label: '新增数量', value: '0'}]);
   assert.equal(state.details, false); assert.equal(state.tables, 0); assert.equal(state.searches, 0);
   assert.match(state.date, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(state.controls, ['当日', '当周', '当月', '回到今天', '刷新报表', '导出 CSV']);
@@ -110,9 +110,9 @@ async function stableReportLayout(evaluate,width,options={}) {
   try{return await stableGeometry(evaluate,cardLayoutScript,width,{label:'Report resize geometry',widthKey:'viewportWidth',heightKey:'viewportHeight',...options})}
   catch(error){if(error.code==='FIXTURE_GEOMETRY')error.message='Report resize geometry did not stabilize: '+JSON.stringify({width,last:error.lastGeometry});throw error}
 }
-function assertCardAlignment(layout, columns = 5) {
+function assertCardAlignment(layout, columns = 4) {
   const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) <= 1, message + ': ' + actual + ' vs ' + expected);
-  const cards = layout.cards; assert.equal(cards.length, 5);
+  const cards = layout.cards; assert.equal(cards.length, 4);
   assert.ok(layout.summary.scrollWidth <= layout.summary.clientWidth + 1, 'summary has no horizontal overflow');
   const first = cards[0];
   for (const [index, card] of cards.entries()) {
@@ -145,7 +145,7 @@ async function run({win, host}) {
   const button = label => `[...document.querySelectorAll('button')].find(node => node.textContent.trim()===${JSON.stringify(label)})`;
   const click = async label => {await wait(`!!${button(label)}&&!${button(label)}.disabled`, 'enabled ' + label); await evaluate(`${button(label)}.click();true`)};
   const settled = () => lifecycle.semantic('#root');
-  const ready = () => wait(`document.querySelector('.report-summary')?.getAttribute('aria-busy')==='false'&&document.querySelector('.report-collection strong')?.textContent==='433'`, 'five real report totals rendered');
+  const ready = () => wait(`document.querySelector('.report-summary')?.getAttribute('aria-busy')==='false'&&document.querySelector('.report-collection strong')?.textContent==='433'`, 'four real report totals rendered');
   const queryList = `reportFixture.requests.filter(item=>item.path==='/api/reports/query')`;
   const fullList = `${queryList}.filter(item=>item.body.summary_only!==true)`;
   const date = async value => {
@@ -166,16 +166,14 @@ async function run({win, host}) {
     assert.equal(await evaluate("reportFixture.requests.filter(item=>item.path==='/api/studio/snapshot').length"), 0, 'collapsed data overview is not fetched');
     await wait('typeof reportFixture.releaseSummary===\'function\'', 'initial summary request held');
     assert.equal(await evaluate(`${fullList}.length`), 0, 'first load does not fetch detail rows');
-    assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['读取中', '读取中', '读取中', '读取中', '读取中']);
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['读取中', '读取中', '读取中', '读取中']);
     assert.equal(await evaluate(`${button('导出 CSV')}.disabled`), true);
     await evaluate('reportFixture.releaseSummary();true'); await ready();
     assertSummaryState(await evaluate(stateScript));
-    assert.match(await evaluate("document.querySelector('.report-posting').getAttribute('aria-label')"), /确认.*回执/);
-    assert.match(await evaluate("document.querySelector('.report-posting').title"), /确认.*回执/);
     assert.equal(await evaluate(`${queryList}[0].body.summary_only`), true);
     assert.equal(await evaluate('document.querySelectorAll(".formal-content table").length'), 0);
     await settled();
-    assertCardAlignment(await evaluate(cardLayoutScript), 5);
+    assertCardAlignment(await evaluate(cardLayoutScript), 4);
     const image = await lifecycle.capture('R6 report summary',{width:1598,height:Math.max(originalSize[1],960),captureTimeoutMs:10000});
     fs.mkdirSync(path.resolve('installer-output'), {recursive: true});
     fs.writeFileSync(path.resolve('installer-output/r6-work-report-summary.png'), image.toPNG());
@@ -185,12 +183,12 @@ async function run({win, host}) {
     await wait("typeof reportFixture.releaseStudio==='function'", 'lazy studio aggregates held');
     assert.equal(await evaluate("document.querySelector('.report-collection strong').textContent"), '433');
     assert.equal(await evaluate(`${button('导出 CSV')}.disabled`), false);
-    assert.deepEqual(await evaluate("[...document.querySelectorAll('#report-data-overview dd')].slice(4).map(node=>node.textContent)"), ['读取中', '读取中', '读取中', '读取中']);
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('#report-data-overview dd')].slice(4).map(node=>node.textContent)"), ['读取中', '读取中', '读取中']);
     await evaluate('reportFixture.releaseStudio();true');
     await wait("document.querySelectorAll('#report-data-overview dd')[4]?.textContent==='17'", 'both legacy aggregate tables retained with loaded data');
-    assert.deepEqual(await evaluate("[...document.querySelectorAll('#report-data-overview dd')].map(node=>node.textContent)"), ['10,000', '8,000', '2,000', '9,000', '17', '3', '11', '7']);
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('#report-data-overview dd')].map(node=>node.textContent)"), ['10,000', '8,000', '2,000', '9,000', '17', '3', '11']);
     const detailText = await evaluate("document.querySelector('#report-data-overview').textContent");
-    for (const label of ['总采集', '公开账号', '私密账号', '全局去重', '累计检查新增', '重复新增', '已完成养号轮次', '已确认发帖']) assert.ok(detailText.includes(label), label);
+    for (const label of ['总采集', '公开账号', '私密账号', '全局去重', '累计检查新增', '重复新增', '已完成养号轮次']) assert.ok(detailText.includes(label), label);
     assert.equal(await evaluate("document.querySelectorAll('#report-data-overview table').length"), 2);
     // Deliver a second native image with the preserved secondary data visible.
     await settled();
@@ -204,10 +202,10 @@ async function run({win, host}) {
     await wait("!document.querySelector('#report-data-overview')", 'secondary section collapsed');
 
     // Every desktop card retains the same tracks, even with large truthful counts.
-    await evaluate('reportFixture.summaryValues={collection:1234567890,follow:1234567890,split:1234567890,added:1234567890,confirmed_posting:1234567890};true');
+    await evaluate('reportFixture.summaryValues={collection:1234567890,follow:1234567890,split:1234567890,added:1234567890};true');
     await click('刷新报表');
     await wait("document.querySelector('.report-collection strong')?.textContent==='1,234,567,890'", 'large totals rendered without abbreviation');
-    for (const [width, columns] of [[1598, 5], [1000, 5], [800, 2], [560, 1]]) {
+    for (const [width, columns] of [[1598, 4], [1000, 4], [800, 2], [560, 1]]) {
       win.setContentSize(width, Math.max(originalSize[1], 960)); await settled();
       let layout;
       try {
@@ -223,16 +221,16 @@ async function run({win, host}) {
         } catch(diagnosticError) {console.error('Report layout diagnostic unavailable',String(diagnosticError));}
         throw error;
       }
-      assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['1,234,567,890', '1,234,567,890', '1,234,567,890', '1,234,567,890', '1,234,567,890']);
+      assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['1,234,567,890', '1,234,567,890', '1,234,567,890', '1,234,567,890']);
     }
     win.setContentSize(1598, Math.max(originalSize[1], 960));
-    await evaluate('reportFixture.summaryValues={collection:433,follow:0,split:2,added:0,confirmed_posting:7};true');
+    await evaluate('reportFixture.summaryValues={collection:433,follow:0,split:2,added:0};true');
     await click('刷新报表'); await ready(); await settled();
 
     // Calendar controls and refresh stay summary-only, with no cached count flash.
     await evaluate('reportFixture.holdSummary=true;true'); await date('2026-03-08');
     await wait('typeof reportFixture.releaseSummary===\'function\'', 'changed date summary held');
-    assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['读取中', '读取中', '读取中', '读取中', '读取中']);
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.report-card strong')].map(node=>node.textContent)"), ['读取中', '读取中', '读取中', '读取中']);
     await evaluate('reportFixture.releaseSummary();true'); await ready();
     for (const label of ['当周', '当月', '刷新报表', '回到今天']) {
       const before = await evaluate(`${queryList}.length`); await click(label);
@@ -271,7 +269,7 @@ async function run({win, host}) {
       if (leave !== 'date') {await click('工作统计'); await ready()}
       assertSummaryState(await evaluate(stateScript));
     }
-    console.log('PASS R6 native merged report: one report nav above history; /data alias; lazy cumulative data; five aligned cards (confirmed posting receipts); no details/search/table; date/week/month/refresh; summary-only queries; complete lazy CSV; duplicate/failure/stale-date/tab guards; screenshot installer-output/r6-work-report-summary.png');
+    console.log('PASS R6 native merged report: one report nav above history; /data alias; lazy cumulative data; four aligned cards; no details/search/table; date/week/month/refresh; summary-only queries; complete lazy CSV; duplicate/failure/stale-date/tab guards; screenshot installer-output/r6-work-report-summary.png');
   } catch(error) {primaryError=error;await lifecycle.diagnose(error)}
   finally {await lifecycle.finish(primaryError,[['restore dimensions',()=>{if(!win.isDestroyed()){win.setMinimumSize(...originalMinimum);win.setContentSize(...originalSize)}}],['HTTP server',()=>closeFixtureServer(server)]]);}
 }

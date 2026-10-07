@@ -111,9 +111,6 @@ requireAll(read("scripts/build_windows.ps1"), ["$CorePreflightExitCode = Invoke-
 requireAll(read("backend/tests/test_pipeline_retained_r81.py"), ["test_one_slot_retries_its_retained_page_without_opening_another", "test_retained_page_counts_toward_two_slot_limit", "test_retained_pages_count_toward_three_slot_limit", "test_repeated_source_and_child_failures_keep_the_original_page_and_pending_row", "test_all_slots_retained_and_unread_still_process_healthy_new_rows"], "r81 retained screening-page queue regression");
 requireAll(read("backend/tests/test_finite_close_r81.py"), ["test_finite_completion_closes_after_disconnect_and_durable_completion", "test_finite_negative_close_ack_retains_lease_until_close_only_retry"], "r81 finite collection close ownership regression");
 requireAll(read("scripts/build_windows.ps1"), ["test_*r81.py", "pipeline-retained-r81-full.log", "$PipelineRetainedExitCode -ne 0"], "r81 retained screening-page and finite close recovery release gate");
-requireAll(read("backend/tests/test_posting_transition_r80.py"), ["test_slow_post_menu_click_gets_a_fresh_upload_confirmation_budget", "test_post_menu_discovered_in_final_poll_still_confirms_upload", "test_menu_without_upload_times_out_without_reclick_or_publish"], "r80 create/upload transition regression");
-requireAll(read("scripts/build_windows.ps1"), ["test_posting_transition_r80.py", "posting-transition-r80-full.log", "$PostingTransitionExitCode -ne 0"], "r80 posting transition release gate");
-requireAll(read("backend/tests/embedded_posting_probe.py"), ["self.pub.step_timeout=fixtures.InstagramPublisher.step_timeout", "embedded-posting-failure.json", "embedded-posting-failure.png"], "r80 real CDP posting deadlines and failure evidence");
 requireAll(read("desktop/tests/embedded-browser.integration.cjs"), ["if(code!==0)throw pythonProbeFailure(script,code,output)"], "r80 Python probe retains its exception and fails closed");
 requireAll(read("backend/tests/test_completion_persistence_r44.py"), ["test_stale_numeric_checkpoint_cannot_inflate_live_progress", "'skipped_global_duplicates': 0, 'qualified_for_review': 0"], "r79 old checkpoint cannot inflate the new review admission count");
 requireAll(read("desktop/tests/chat-translation.integration.cjs"), ["await read();host.window().focus();wc.focus();", "native Enter must reach the focused chat input", "attempt<20"], "r77 native chat focus and bounded event acknowledgement");
@@ -383,6 +380,18 @@ const builderBatchSource = read("build_installer_windows.bat");
 const startHereSource = read("START_HERE_NEWGEN.bat");
 const workflowSource = read(".github/workflows/public-windows-verify.yml");
 const backendSmokeSource = read("scripts/verify_backend_smoke.py");
+
+// Retired publishing implementations cannot silently return to either product.
+for (const path of [
+  'backend/app/posting_workflow.py', 'backend/app/posting_executor.py',
+  'backend/app/instagram_publisher.py', 'backend/app/instagram_crop.py',
+  'backend/app/instagram_crop_dom.py', 'backend/app/posting_pexels.py',
+  'renderer/src/posting-workspace.tsx', 'renderer/src/posting-workspace.css',
+  'desktop/src/pexels-integration.ts',
+]) assert(!existsSync(at(path)), 'retired publishing implementation remains: ' + path);
+forbidAll(appSource + '\n' + coreClientSource, [
+  'PostingWorkspace', 'posting-workspace', '/api/posting/', '/api/internal/integrations/pexels',
+], 'retained renderer routes and Core client');
 
 // Exactly six formal routes, protected by the local authentication gate.
 requireAll(appSource, [
@@ -1172,11 +1181,11 @@ requireAll(publicCiControls, [
 ], 'public exact source, fresh single NSIS hash and checksum verification');
 requireAll(publicInstalledGate, [
   '--pure-ig', '--snapshot-scale', '--collection-completion', '--standalone-nurture',
-  '--posting-workflow', '--nurture-cleanup-upgrade', '441552', '602831',
+  '--nurture-cleanup-upgrade', '441552', '602831', 'posting_removed', '$removed.http_status -ne 404',
   'verify_installed_recovery_r64.py', '-TimeoutSeconds 180', "'120'",
 ], 'actual installed source-independent Core, migration, scale and recovery gates');
 requireAll(publicInstalledOracle, [
-  'r63_upgrade_proof.py', 'r63_native_proof.py', 'r64_crop_proof.py', 'r64_recovery_ui_proof.py',
+  'r63_upgrade_proof.py', 'r63_native_proof.py', 'r64_recovery_ui_proof.py',
   'verify_installed_recovery_r64.py', 'bind_native(bound,identity)',
   "same_json(installed.get('recovery_api'),recovery_api)", 'core_upgrade_manifest_sha256',
 ], 'all independent legacy and current installed proof validators');

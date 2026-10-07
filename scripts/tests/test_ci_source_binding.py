@@ -439,7 +439,9 @@ class RealGitBindingTests(unittest.TestCase):
         (executable.parent / 'resources/app.asar').write_bytes(b'synthetic asar')
         f = probe.fixture
         state = {'verified': True, 'no_submission': True, 'historical_receipts': 1,
-            'protected_tables': len(f.PROTECTED), 'login_files': 8, 'protected_sha256': 'p', 'material_sha256': 'm'}
+            'protected_tables': len(f.PROTECTED), 'login_files': 8, 'protected_sha256': 'p', 'material_sha256': 'm',
+            'retired_idle_associations': 1, 'quarantined_jobs': 1, 'preserved_active_leases': 1,
+            'archive': {'verified': True, 'archived_rows': 5, 'copied_files': 1, 'archive_rows_sha256': 'e' * 64}}
         proof = {**probe.source_binding(), 'verified': True, 'contract': f.CONTRACT, 'platform': 'win32',
             'synthetic': True, 'live_accounts_tested': False, 'user_data_touched': False,
             'desktop': {'pid': 11, 'executable': str(executable), 'sha256': safe._sha256(executable.read_bytes())},
@@ -450,15 +452,13 @@ class RealGitBindingTests(unittest.TestCase):
             'input_database_sha256': 'c' * 64, 'nonce': 'd' * 64,
             'normal_shutdown': True, 'manifest_unchanged': True,
             'checks': dict.fromkeys(probe.FLAGS, True),
-            'startup': {**state, 'posting_queue_revision': 0, 'withdrawal_audits': 0},
-            'persisted_state': {**state, 'posting_queue_revision': 2, 'withdrawal_audits': 1},
-            'api_calls': [{'path': '/api/posting/snapshot', 'action': None,
+            'startup': copy.deepcopy(state),
+            'persisted_state': copy.deepcopy(state),
+            'api_calls': [{'path': '/api/studio/snapshot', 'action': None,
                 'expected_status': 200, 'observed_status': None, 'transport': 'desktop-ipc'}],
-            'fresh_review': {'id': f.POST, 'caption': f.CAPTION, 'asset_id': f.ASSET,
-                'profile_id': f.PROFILES['posting'], 'expected_username': f.USERNAME, 'queue_revision': 1},
             'located_task': {'task_id': f.TASK, 'version': 7, 'status': 'paused',
                 'dismissed': True, 'can_stop': True, 'window_ids': [f.PROFILES['collection']]},
-            'safety_fence': 'invalid-synthetic-render-digest-before-PlaywrightWorker',
+            'safety_fence': 'posting-feature-removed-no-execution-or-owner-theft',
             'desktop_app_asar_sha256': safe._sha256(b'synthetic asar')}
         return proof, executable, core
 
@@ -492,7 +492,7 @@ class RealGitBindingTests(unittest.TestCase):
                     (('user_data_touched',), True), (('core_frozen',), False),
                     (('platform',), 'linux'), (('normal_shutdown',), False),
                     (('manifest_unchanged',), False), (('safety_fence',), 'missing'),
-                    (('launch_perf_ns',), 1), (('persisted_state', 'withdrawal_audits'), 0)):
+                    (('launch_perf_ns',), 1), (('persisted_state', 'retired_idle_associations'), 0)):
                 changed = copy.deepcopy(proof); target = changed
                 for key in path[:-1]:
                     target = target[key]

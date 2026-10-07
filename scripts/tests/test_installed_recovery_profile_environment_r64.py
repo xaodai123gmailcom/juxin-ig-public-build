@@ -7,6 +7,7 @@ import ast
 from contextlib import nullcontext
 import copy
 import hashlib
+import io
 import json
 import math
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import traceback
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -48,6 +50,60 @@ def functions(*names, **dependencies):
 
 
 class InstalledProfileEnvironmentTests(unittest.TestCase):
+    def test_failed_cli_keeps_traceback_runner_local_and_removes_stale_success(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / 'proof.json'
+            report.write_text('{"verified":true}', encoding='utf-8')
+            args = SimpleNamespace(executable=Path('desktop.exe'), core_executable=Path('core.exe'),
+                core_report=Path('core.json'), log=Path('runtime.log'), report=report, timeout=120)
+            parser = Mock(); parser.parse_args.return_value = args
+            problem = RuntimeError('runner-only-private-exception')
+            probe = Mock(side_effect=problem)
+            main = functions('main', argparse=SimpleNamespace(ArgumentParser=lambda **kwargs: parser),
+                probe_installed=probe, traceback=traceback).main
+            output, errors = io.StringIO(), io.StringIO()
+            main.__globals__['sys'] = SimpleNamespace(stderr=errors)
+            with patch('sys.stdout', output):
+                self.assertEqual(main(), 1)
+            self.assertFalse(report.exists())
+            self.assertIn('Traceback (most recent call last):', errors.getvalue())
+            self.assertIn(str(SOURCE), errors.getvalue())
+            self.assertIn('RuntimeError: runner-only-private-exception', errors.getvalue())
+            self.assertEqual(output.getvalue(), 'INSTALLED_RECOVERY_R64=FAIL runner-only-private-exception\n')
+            self.assertNotIn('INSTALLED_RECOVERY_R64=PASS', output.getvalue())
+            probe.assert_called_once_with(args.executable, args.core_executable, args.core_report,
+                args.log, timeout=120)
+
+    def test_failed_traceback_output_still_returns_failure_without_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = SimpleNamespace(executable='desktop', core_executable='core', core_report='prior',
+                log='log', report=Path(temporary) / 'proof.json', timeout=120)
+            parser = Mock(); parser.parse_args.return_value = args
+            trace = Mock(); trace.print_exc.side_effect = OSError('diagnostic stream unavailable')
+            main = functions('main', argparse=SimpleNamespace(ArgumentParser=lambda **kwargs: parser),
+                probe_installed=Mock(side_effect=RuntimeError('proof failed')), traceback=trace).main
+            main.__globals__['sys'] = SimpleNamespace(stderr=io.StringIO())
+            with patch('sys.stdout', io.StringIO()):
+                self.assertEqual(main(), 1)
+            trace.print_exc.assert_called_once()
+            self.assertFalse(args.report.exists())
+
+    def test_successful_cli_writes_receipt_without_failure_diagnostic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = SimpleNamespace(executable='desktop', core_executable='core', core_report='prior',
+                log='log', report=Path(temporary) / 'proof.json', timeout=120)
+            parser = Mock(); parser.parse_args.return_value = args
+            proof = {'synthetic_test': True}
+            trace = Mock()
+            main = functions('main', argparse=SimpleNamespace(ArgumentParser=lambda **kwargs: parser),
+                probe_installed=Mock(return_value=proof), traceback=trace).main
+            output = io.StringIO()
+            with patch('sys.stdout', output):
+                self.assertEqual(main(), 0)
+            self.assertEqual(json.loads(args.report.read_text()), proof)
+            self.assertTrue(output.getvalue().startswith('INSTALLED_RECOVERY_R64=PASS '))
+            trace.print_exc.assert_not_called()
+
     def test_profile_values_survive_while_inherited_auth_and_runtime_controls_do_not(self):
         with patch.dict(os.environ, {**PROFILE, **POISON}, clear=True):
             before = dict(os.environ)

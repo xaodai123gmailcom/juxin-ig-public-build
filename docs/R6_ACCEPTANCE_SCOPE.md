@@ -10,18 +10,15 @@ This checklist describes required evidence. It is not a claim that a Windows bui
 | Parent collector Reels uses 8–20 seconds / 50% | parent_reels.py | current-source ownership/action regressions and offline real-Chrome Reels proof |
 | Seven truthful collection counters | collection task renderer | counter semantics tests and native collection screenshot |
 | One merged reports page above history | reports-workspace, report-data-overview | route alias, lazy loading, stale-response/cancellation, full CSV tests and native screenshots |
-| Five aligned cards, new posting count from confirmed receipts | work_reports, reports-workspace | exact timezone/microsecond/owner tests; never count legacy/manual/unknown results as new receipts |
+| Four aligned collection/follow/split/added cards | work_reports, reports-workspace | exact timezone/microsecond/owner and CSV tests; no posting metrics or rows |
 | Header removals and wolf refresh | formal-workbench | safe app-only refresh, single-flight/error recovery and native shell screenshots |
 | Standalone nurture hidden 8–20 seconds / 70%; default5min and concurrency | standalone_nurture / studio | identity, real active-clock accounting, persistent decisions, busy-window and restart tests |
 | Own profile metrics and nurture history | standalone_nurture / UI | unknown values preserved, immutable capture timing, installed standalone_nurture proof and native settings/history/narrow/error screenshots |
-| Real single-image posting queue | posting_workflow / posting_executor | session/owner isolation, exact review CAS, submit-once, unknown outcome, strict lease and cleanup proofs; native posting stats/window/credential/paging screenshot |
-| Global material deduplication and bounded downloading | posting_pexels / posting_schema | provider-ID and both content-hash reservations, network error/redirect limits, offline image validation |
-| Secure Pexels configuration | desktop encrypted store / internal Core activation | safeStorage fail-closed, no generic bridge read/write, redaction, env removal, no database secret, no task restart |
-| Installed exact EXE behavior | bootstrap verify-installed / frozen selftests | installed report, collection, nurture and posting proofs all tied to the same installer digest |
+| Installed exact EXE behavior | bootstrap verify-installed / frozen selftests | installed report, collection, nurture, removal/archive and hidden collection recovery proofs all tied to the same installer digest |
 
 ## External verification boundary
 
-All social-action tests use synthetic accounts/pages/receipts. No real Instagram posts, likes or account changes are part of acceptance. Pexels requires the user's valid local API credential, which is not embedded, provisioned or used in these tests. The installer must clearly report unconfigured/invalid/unconfirmed service states. There is no Commons provider, no website crawler, and no paid server requirement.
+All social-action tests use synthetic accounts/pages/receipts. No real Instagram posts, likes or account changes are part of acceptance. Posting and Pexels are removed; legacy content is protected by verified recoverable archival and active-owner fences. See [removal acceptance](POSTING_REMOVAL_ACCEPTANCE.md). There is no Commons provider, no website crawler, and no paid server requirement.
 
 ## Evidence interpretation
 

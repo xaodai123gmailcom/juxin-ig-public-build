@@ -102,7 +102,7 @@ def probe_work_report_summary(request, *, session: str, result_count: int) -> di
     """
     payload = {'kind': 'activity', 'platform': 'instagram',
                'start': '2026-10-01T00:00:00+00:00', 'end': '2026-10-02T00:00:00+00:00'}
-    expected = {'collection': result_count, 'follow': 0, 'split': 0, 'added': 0, 'confirmed_posting': 0}
+    expected = {'collection': result_count, 'follow': 0, 'split': 0, 'added': 0}
     summaries = []
     times = []
     for _ in range(2):
@@ -126,6 +126,8 @@ def probe_work_report_summary(request, *, session: str, result_count: int) -> di
             or type(full.get('unattributed')) is not int
             or any(full.get(key) != payload[key] for key in ('platform', 'start', 'end'))
             or not isinstance(full.get('totals'), dict)
+            or {'posting', 'confirmed_posting'}.intersection(full['totals'])
+            or any({'posting', 'confirmed_posting'}.intersection(row) for row in full['rows'])
             or any(type(full['totals'].get(key)) is not int or full['totals'][key] != value
                    for key, value in expected.items())):
         raise RuntimeError('Installed work-report legacy path disagrees with exact summary totals')
@@ -142,7 +144,7 @@ def probe_work_report_summary(request, *, session: str, result_count: int) -> di
 
 
 def probe_report_index_totals(request, *, session, expected):
-    """Five positive metric oracles, including the legacy CSV route."""
+    """Four positive metric oracles, including the legacy CSV route."""
     payload = {'kind': 'activity', 'platform': 'instagram',
                'start': expected['start'], 'end': expected['end']}
     timings = []
@@ -152,17 +154,46 @@ def probe_report_index_totals(request, *, session, expected):
             budget=180, payload={**payload, 'summary_only': summary_only})
         timings.append(round(time.monotonic() - started, 6))
         if (status != 200 or not isinstance(report.get('totals'), dict)
+                or {'posting', 'confirmed_posting'}.intersection(report['totals'])
+                or any({'posting', 'confirmed_posting'}.intersection(row) for row in report.get('rows', []))
                 or any(type(report['totals'].get(key)) is not int or report['totals'][key] != value
                        for key, value in expected['totals'].items())):
-            raise RuntimeError('Installed legacy-index upgrade changed the five positive report totals')
+            raise RuntimeError('Installed legacy-index upgrade changed the four positive report totals')
         if summary_only and (set(report['totals']) != set(expected['totals']) or 'rows' in report):
             raise RuntimeError('Installed legacy-index summary response has the wrong wire shape')
         if not summary_only and (not isinstance(report.get('rows'), list)
                 or any(sum(row.get(key, 0) for row in report['rows']) != value
                        for key, value in expected['totals'].items())):
-            raise RuntimeError('Installed legacy-index CSV rows disagree with the five report totals')
+            raise RuntimeError('Installed legacy-index CSV rows disagree with the four report totals')
     return {'summary_first_seconds': timings[0], 'summary_repeat_seconds': timings[1],
             'legacy_full_seconds': timings[2]}
+
+
+REMOVED_POSTING_ENDPOINTS = (
+    {'path': '/api/posting/snapshot', 'method': 'GET'},
+    {'path': '/api/posting/command', 'method': 'POST'},
+    {'path': '/api/internal/integrations/pexels', 'method': 'POST'},
+)
+
+
+def probe_posting_removed(request, *, session=None):
+    """Actual selected Core HTTP route absence; a preload denial is insufficient."""
+    for endpoint in REMOVED_POSTING_ENDPOINTS:
+        options = {'method': endpoint['method'], 'session': session, 'budget': 10}
+        if endpoint['method'] == 'POST':
+            options['payload'] = {'action': 'start', 'job_ids': ['removed-offline-fixture']}
+        try:
+            status, body = request(endpoint['path'], **options)
+        except HTTPError as error:
+            try:
+                if error.code != 404:
+                    raise RuntimeError('Removed posting endpoint did not return HTTP 404') from error
+            finally:
+                error.close()
+        else:
+            if status != 404:
+                raise RuntimeError('Removed posting endpoint remains available: ' + endpoint['path'])
+    return {'verified': True, 'http_status': 404, 'endpoints': list(REMOVED_POSTING_ENDPOINTS)}
 
 
 def probe_core(command: list[str], log_path: Path, *, timeout=90.0,
@@ -239,6 +270,7 @@ def probe_core(command: list[str], log_path: Path, *, timeout=90.0,
                     session = registered.get('session_token')
                     if status != 201 or not session:
                         raise RuntimeError('Installed Core test session could not be created')
+                removed_proof = probe_posting_removed(request, session=locals().get('session'))
                 if snapshot_scale_smoke:
                     # Only the fresh probe's temporary DB is seeded. This tests
                     # the exact installed executable, never a user's live data.
@@ -550,7 +582,7 @@ def probe_core(command: list[str], log_path: Path, *, timeout=90.0,
                         index_helper.verify(database, index_before, legacy_index)
                     scale_proof['report_index_upgrade'] = {**index_proof,
                         'restart_count': 2, 'repeated_startup_idempotent': True,
-                        'five_card_totals': index_expected['totals'], 'report_timings': report_timings}
+                        'four_card_totals': index_expected['totals'], 'report_timings': report_timings}
             finally:
                 if process.poll() is None:
                     process.terminate()
@@ -582,7 +614,7 @@ def probe_core(command: list[str], log_path: Path, *, timeout=90.0,
                         or index_columns != ['owner_user_id', 'status', 'visibility', 'review_stage', 'created_at', 'id', 'account_id']):
                     raise RuntimeError('Installed old-schema upgrade did not restore review fields and covering index')
 
-        return {'verified': True, 'source_revision': expected_revision,
+        return {'verified': True, 'source_revision': expected_revision, 'posting_removed': removed_proof,
                 'authentication': True, 'database': 'ok', 'orderly_shutdown': True,
                 **({'pure_instagram': True, 'removed_platform_inputs_rejected': True} if pure_ig_smoke else {}),
                 **({'snapshot_scale': scale_proof, 'work_report_summary': scale_proof['work_report_summary'],
@@ -851,81 +883,6 @@ def validate_standalone_nurture_proof(proof: dict) -> dict:
 
 
 
-def probe_posting_workflow(command: list[str], log_path: Path, *, timeout=120.0) -> dict:
-    """The selected installed EXE must execute the real offline posting fixture."""
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError('Posting workflow probe deadline must be finite and positive')
-    environment = {key: value for key, value in os.environ.items()
-        if not key.upper().startswith(('IGAC_', 'COLLECTOR_CORE_', 'PLAYWRIGHT_', 'PYTHON'))
-        and key.upper() not in {'OPENVINO_LIB_PATHS', '__PYVENV_LAUNCHER__'}}
-    environment.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
-    if os.name == 'nt':
-        windows = Path(os.environ['SystemRoot'])
-        environment['PATH'] = os.pathsep.join(map(str, (windows / 'System32', windows, windows / 'System32/Wbem')))
-    log_path = Path(log_path).absolute()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with probe_directory(prefix='Juxin-PostingWorkflowCli-') as temporary:
-        with log_path.open('wb') as log:
-            process = subprocess.Popen([*direct_child_command(command, environment), '--verify-posting-workflow'],
-                cwd=temporary, env=environment, stdout=log, stderr=subprocess.STDOUT)
-            try:
-                code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired as error:
-                process.kill()
-                process.wait(timeout=10)
-                raise RuntimeError(f'Installed posting workflow self-test timed out; see {log_path}') from error
-    if code != 0:
-        raise RuntimeError(f'Installed posting workflow self-test failed ({code}); see {log_path}')
-    prefix = 'POSTING_WORKFLOW_SELFTEST=PASS '
-    proofs = [line[len(prefix):] for line in log_path.read_text(encoding='utf-8').splitlines() if line.startswith(prefix)]
-    if len(proofs) != 1:
-        raise RuntimeError('Installed posting workflow self-test did not emit exactly one proof')
-    return validate_posting_workflow_proof(json.loads(proofs[0]))
-
-
-def validate_posting_workflow_proof(proof: dict) -> dict:
-    flags = ('verified','synthetic','network_disabled','production_manager_service_and_database',
-             'production_material_registry_and_cleanup','production_positive_close_fence')
-    if (not isinstance(proof,dict) or any(proof.get(flag) is not True for flag in flags)
-            or any(proof.get(flag) is not False for flag in ('live_accounts_tested','live_pexels_tested',
-                                                            'live_instagram_posted','user_data_touched'))):
-        raise RuntimeError('Installed posting workflow proof has invalid isolation flags')
-    cases=proof.get('cases',{})
-    if not isinstance(cases,dict):raise RuntimeError('Installed posting workflow cases are missing')
-    contracts={
-        'admission_and_review': {
-            'numbers':{'reviewed_tuple_fields_checked':4},
-            'flags':('unconfigured_no_fake_jobs','exact_caption_preserved','idempotent_generation',
-                     'reviewed_batch_atomic','verified_account_assignment_required','blocked_batch_atomic',
-                     'foreign_lease_untouched','owner_isolation')},
-        'confirmed_success': {
-            'numbers':{'synthetic_publish_calls':1,'receipts':1,'confirmed_posting_report':1},
-            'flags':('double_confirmation_counted_once','submit_fence_before_share','recoverable_material_cleanup',
-                     'positive_close_before_release','completed_card_removed','completed_job_cannot_replay',
-                     'database_reopen_persistence','report_owner_isolation')},
-        'unknown_restart': {
-            'numbers':{'synthetic_publish_calls':1,'receipts':0},
-            'flags':('unknown_not_success_or_failure','restart_submit_fence','expired_lease_survives_generic_startup',
-                     'foreign_operation_blocked','automatic_replay_rejected','explicit_close_requires_confirmation',
-                     'explicit_close_never_reposts','unknown_report_zero')},
-        'negative_close': {
-            'numbers':{'synthetic_publish_calls':1,'receipts':1},
-            'flags':('negative_close_retains_lease_card_and_executor','receipt_survives_close_failure',
-                     'cleanup_retry_no_repost','same_lease_through_retry','positive_close_releases_once')},
-        'global_material_dedup': {
-            'numbers':{'synthetic_publish_calls':0,'receipts':0},
-            'flags':('global_provider_id_fence','global_original_sha256_fence','global_normalized_sha256_fence',
-                     'cross_owner_dedup','duplicate_registry_retained','duplicates_cannot_become_ready')},
-    }
-    for name,contract in contracts.items():
-        case=cases.get(name,{})
-        if (not isinstance(case,dict) or case.get('verified') is not True
-                or any(case.get(flag) is not True for flag in contract['flags'])
-                or any(type(case.get(key)) is not int or case[key]!=value for key,value in contract['numbers'].items())):
-            raise RuntimeError('Installed posting workflow case missing or invalid: '+name)
-    return proof
-
-
 def _nurture_upgrade_fixture():
     spec = importlib.util.spec_from_file_location('nurture_cleanup_upgrade_fixture',
         Path(__file__).with_name('nurture_cleanup_upgrade_fixture.py'))
@@ -984,7 +941,7 @@ def validate_nurture_cleanup_upgrade_proof(proof, *, manifest, manifest_sha256,
                 'launch_ns': launch_ns, 'opened_ns': proof['opened_ns'], 'seed_pid': proof['seed_pid'],
                 'process_pid': process_pid, 'runtime': proof.get('runtime'),
                 'performance_clock': vars(time.get_clock_info('perf_counter'))}, sort_keys=True))
-    for key, value in (('network_attempts', 0), ('activity_attempts', 0), ('synthetic_open_admissions', 3)):
+    for key, value in (('network_attempts', 0), ('activity_attempts', 0), ('synthetic_open_admissions', len(fixture.RECOVERED))):
         if type(proof.get(key)) is not int or proof[key] != value:
             raise RuntimeError('Installed nurture upgrade performed unexpected effects or admissions')
     runtime = proof.get('runtime')
@@ -1006,12 +963,12 @@ def validate_nurture_cleanup_upgrade_proof(proof, *, manifest, manifest_sha256,
                 or module.name not in {'nurture_cleanup_upgrade_selftest.py', 'nurture_cleanup_upgrade_selftest.pyc'}
                 or module.parent.name != 'app'):
             raise RuntimeError('Installed nurture upgrade requires bundled code in the frozen Windows Core')
-    if proof.get('startup_sequence') != ['database.initialize', 'service.recover_interrupted_operations',
-            'posting.recover', 'monitor.recover_interrupted', 'studio.recover', 'accounts.recover',
-            'studio.start_scheduler', 'posting.start_scheduler']:
+    if proof.get('startup_sequence') != ['database.initialize', 'posting.retire_legacy', 'service.recover_interrupted_operations',
+            'monitor.recover_interrupted', 'studio.recover', 'accounts.recover',
+            'studio.start_scheduler']:
         raise RuntimeError('Installed nurture upgrade bypassed the normal production startup sequence')
     if proof.get('queued_blockers_before_startup') != {'queued_collection': 'collection',
-            'queued_studio': 'studio', 'queued_monitor': 'monitor', 'queued_action': 'action', 'prepared_posting': 'posting'}:
+            'queued_studio': 'studio', 'queued_monitor': 'monitor', 'queued_action': 'action'}:
         raise RuntimeError('Installed nurture upgrade did not verify queued/prepared blockers before startup')
     transition = proof.get('startup_action_transition')
     if (not isinstance(transition, dict) or set(transition) != {'before', 'after', 'version_before', 'version_after', 'after_sha256'}
@@ -1056,7 +1013,7 @@ def validate_nurture_cleanup_upgrade_proof(proof, *, manifest, manifest_sha256,
                 or case['new_job_id'] in manifest['before_jobs']):
             raise RuntimeError('Installed nurture upgrade admission case missing or invalid: ' + name)
         job_ids.append(case['new_job_id'])
-    if len(set(job_ids)) != 3:
+    if len(set(job_ids)) != len(fixture.RECOVERED):
         raise RuntimeError('Installed nurture upgrade did not create one fresh job per recovered profile')
     return proof
 
@@ -1120,7 +1077,6 @@ def main() -> int:
     parser.add_argument('--snapshot-scale', action='store_true', help='Verify the installed Core with an isolated 441552/602831-row synthetic database')
     parser.add_argument('--collection-completion', action='store_true', help='Run offline installed R6/R6.2 single-gap-pass, durable manual parent recheck, completion and cleanup verification')
     parser.add_argument('--standalone-nurture', action='store_true', help='Run isolated installed standalone Reels, identity, history and pending-effect verification')
-    parser.add_argument('--posting-workflow', action='store_true', help='Run offline installed posting queue, receipt, cleanup and no-replay verification')
     parser.add_argument('--nurture-cleanup-upgrade', action='store_true', help='Require installed Windows Core recovery of externally persisted R6.2 orphan holds')
     parser.add_argument('--report', type=Path, help='Write the successful verification record')
     args = parser.parse_args()
@@ -1136,9 +1092,6 @@ def main() -> int:
         if args.standalone_nurture:
             result['standalone_nurture'] = probe_standalone_nurture(
                 [str(args.executable.resolve(strict=True))], args.log.with_name(args.log.stem + '-standalone-nurture.log'))
-        if args.posting_workflow:
-            result['posting_workflow'] = probe_posting_workflow(
-                [str(args.executable.resolve(strict=True))], args.log.with_name(args.log.stem + '-posting-workflow.log'))
         if args.nurture_cleanup_upgrade:
             result['nurture_cleanup_upgrade'] = probe_nurture_cleanup_upgrade(
                 [str(args.executable.resolve(strict=True))], args.log.with_name(args.log.stem + '-nurture-cleanup-upgrade.log'))

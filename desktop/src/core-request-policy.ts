@@ -9,7 +9,6 @@ const allowedPostPaths = new Set([
   "/api/follow-monitor/runs",
   "/api/follow-monitor/control",
   "/api/studio/command",
-  "/api/posting/command",
   "/api/reports/query",
   "/api/reports/split-review",
   "/api/reports/private-follow-review",
@@ -59,17 +58,6 @@ function isAllowedWorkbenchSnapshotQuery(path: string) {
     && historyLimit <= 5_000;
 }
 
-function isAllowedPostingSnapshot(path: string) {
-  if (path === "/api/posting/snapshot") return true;
-  if (!path.startsWith("/api/posting/snapshot?")) return false;
-  const query = new URLSearchParams(path.slice(path.indexOf("?") + 1));
-  const keys = [...query.keys()];
-  return keys.length > 0 && keys.every(key => ["timezone", "cursor", "limit"].includes(key) && query.getAll(key).length === 1)
-    && (!query.has("timezone") || /^[A-Za-z0-9_+\/-]{1,100}$/.test(query.get("timezone") || ""))
-    && (!query.has("cursor") || /^[A-Za-z0-9_-]{1,254}={0,2}$/.test(query.get("cursor") || ""))
-    && (!query.has("limit") || /^(?:[1-9]\d?|1\d{2}|200)$/.test(query.get("limit") || ""));
-}
-
 export function isAllowedCorePath(path: string) {
   return typeof path === "string"
     && path.length <= 512
@@ -80,7 +68,6 @@ export function isAllowedCorePath(path: string) {
       || path === "/api/follow-monitor/snapshot"
       || path === "/api/follow-monitor/diagnostics"
       || isAllowedWorkbenchSnapshotQuery(path)
-      || isAllowedPostingSnapshot(path)
       || allowedPostPaths.has(path)
     );
 }
@@ -94,7 +81,7 @@ export function normalizeCoreMethod(method?: string) {
 export function isAllowedCoreRequest(path: string, method: string) {
   if (!isAllowedCorePath(path)) return false;
   return method === "GET"
-    ? isAllowedPostingSnapshot(path) || path === "/api/cloud/status" || path === "/api/accounts/unread" || path === "/api/accounts/snapshot" || path === "/api/studio/snapshot" || path === "/api/workbench/snapshot" || path === "/api/workbench/storage" || path === "/api/workbench/live-status" || path === "/api/follow-monitor/snapshot" || path === "/api/follow-monitor/diagnostics" || isAllowedWorkbenchSnapshotQuery(path)
+    ? path === "/api/cloud/status" || path === "/api/accounts/unread" || path === "/api/accounts/snapshot" || path === "/api/studio/snapshot" || path === "/api/workbench/snapshot" || path === "/api/workbench/storage" || path === "/api/workbench/live-status" || path === "/api/follow-monitor/snapshot" || path === "/api/follow-monitor/diagnostics" || isAllowedWorkbenchSnapshotQuery(path)
     : method === "POST" && allowedPostPaths.has(path);
 }
 

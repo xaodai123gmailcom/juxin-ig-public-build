@@ -23,23 +23,22 @@
   "chronology_clock": "perf_counter_ns-system-v1",
   "startup_sequence": [
     "database.initialize",
+    "posting.retire_legacy",
     "service.recover_interrupted_operations",
-    "posting.recover",
     "monitor.recover_interrupted",
     "studio.recover",
     "accounts.recover",
-    "studio.start_scheduler",
-    "posting.start_scheduler"
+    "studio.start_scheduler"
   ],
   "persisted_state": {
     "expected_startup_action_pauses": 1,
     "global_dedupe_identities": 3,
     "historical_jobs": 19,
     "login_files": 68,
-    "new_jobs": 3,
+    "new_jobs": 4,
     "protected_tables": 15,
-    "recovered_holds": 3,
-    "retained_holds": 15,
+    "recovered_holds": 4,
+    "retained_holds": 14,
     "untouched_leases": 3,
     "verified": true
   },
@@ -48,7 +47,7 @@
   "input_database_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "network_attempts": 0,
   "activity_attempts": 0,
-  "synthetic_open_admissions": 3,
+  "synthetic_open_admissions": 4,
   "seed_pid": 100,
   "seed_completed_ns": 1000,
   "opened_ns": 2000,
@@ -70,8 +69,7 @@
     "queued_collection": "collection",
     "queued_studio": "studio",
     "queued_monitor": "monitor",
-    "queued_action": "action",
-    "prepared_posting": "posting"
+    "queued_action": "action"
   },
   "cases": {
     "closed_legacy": {
@@ -219,16 +217,16 @@
       "recovery_state": "lease_lost"
     },
     "prepared_posting": {
-      "hold_after": true,
-      "startup_guard_calls": 0,
-      "explicit_retry_error": "conflict",
+      "hold_after": false,
+      "startup_guard_calls": 1,
+      "explicit_retry_error": "",
       "verified": true,
       "hold_before": true,
       "job_id": "synthetic-old-job-12",
       "profile_id": "synthetic-profile-12",
       "history_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       "historical_lease_token": "synthetic-lease-12",
-      "recovery_state": "lease_lost"
+      "recovery_state": "reconciled_closed"
     },
     "unknown_action": {
       "hold_after": true,
@@ -313,6 +311,14 @@
       "blocked_open_before": true,
       "blocked_task_before": true,
       "new_job_id": "synthetic-new-job-2",
+      "new_task_after": true,
+      "open_after": true
+    },
+    "prepared_posting": {
+      "account_lease_released": true,
+      "blocked_open_before": true,
+      "blocked_task_before": true,
+      "new_job_id": "synthetic-new-job-3",
       "new_task_after": true,
       "open_after": true
     }

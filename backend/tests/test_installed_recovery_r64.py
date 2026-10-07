@@ -31,7 +31,7 @@ class IpcFacade:
         import re
         self.posts = set(re.findall(r'"(/api/[^" ]+)"', source.split('const allowedPostPaths = new Set([')[1].split(']);')[0]))
     def __call__(self, path, body=None):
-        allowed = path in self.posts if body is not None else path in {'/api/posting/snapshot', '/api/workbench/snapshot?limit=1&history_limit=1&platform=instagram'}
+        allowed = path in self.posts if body is not None else path in {'/api/studio/snapshot', '/api/workbench/snapshot?limit=1&history_limit=1&platform=instagram'}
         if not allowed: return {'ok': False, 'transport': 'desktop-ipc', 'status': None, 'error': '不允许访问该本机接口'}
         value = self.api(path, body)
         if value['ok']: return {**value, 'transport': 'desktop-ipc'}
@@ -124,7 +124,7 @@ class InstalledRecoveryR64Tests(unittest.TestCase):
     def test_real_separate_normal_lifespan_core_authenticated_api_recovers_both_flows(self):
         self.assertTrue(all(self.result['checks'].values()))
         self.assertEqual([], self.forbidden)
-        self.assertEqual(2, sum(call['method'] == 'confirm-closed' for call in self.calls))
+        self.assertEqual(1, sum(call['method'] == 'confirm-closed' for call in self.calls))
         self.assertLess(self.manifest['seed_completed_perf_ns'], self.launch_perf_ns)
         self.assertLess(self.launch_perf_ns, self.ready_perf_ns)
         self.assertNotEqual(self.manifest['seed_pid'], self.process.pid)
@@ -167,7 +167,7 @@ class InstalledRecoveryR64Tests(unittest.TestCase):
                 (('manifest_unchanged',), False), (('platform',), 'linux'),
                 (('launch_perf_ns',), self.manifest['seed_completed_perf_ns']),
                 (('ready_perf_ns',), self.launch_perf_ns), (('safety_fence',), 'no-op'),
-                (('persisted_state', 'withdrawal_audits'), 0), (('startup', 'posting_queue_revision'), True),
+                (('persisted_state', 'retired_idle_associations'), 0), (('startup', 'preserved_active_leases'), True),
                 (('persisted_state', 'no_submission'), False)):
             damaged = copy.deepcopy(proof); target = damaged
             for key in path[:-1]: target = target[key]
@@ -176,31 +176,47 @@ class InstalledRecoveryR64Tests(unittest.TestCase):
 
     def test_independent_post_exit_oracle_rejects_corruption_and_closes_windows_handles(self):
         mutations = (
-            "UPDATE posting_jobs SET caption='lost' WHERE id='offline-r64-queued-post'",
-            "UPDATE posting_jobs SET queue_revision=0 WHERE id='offline-r64-queued-post'",
-            "UPDATE posting_jobs SET attempt_id='shared' WHERE id='offline-r64-queued-post'",
-            'DELETE FROM posting_withdraw_history', 'DELETE FROM posting_receipts',
+            "UPDATE posting_jobs SET caption='lost'",
+            "DELETE FROM browser_operation_leases",
+            "UPDATE browser_operation_leases SET owner_user_id='stolen'",
+            'DELETE FROM posting_retirement_tombstones',
             'DELETE FROM task_results', 'DELETE FROM task_checkpoints', 'DELETE FROM global_seen',
             'DELETE FROM task_list_dismissals', "UPDATE tasks SET status='paused'",
             "UPDATE studio_jobs SET result_json=json_set(result_json,'$.counts.like',99)",
             "UPDATE studio_jobs SET result_json=json_set(result_json,'$.window_cleanup.lease_token','changed')",
-            "UPDATE posting_assets SET render_sha256='changed'", 'UPDATE auth_sessions SET auto_login=0')
+            'UPDATE auth_sessions SET auto_login=0')
         for sql in mutations:
             with self.subTest(sql=sql), tempfile.TemporaryDirectory() as temporary:
                 target = Path(temporary) / 'copy'; shutil.copytree(self.root, target)
+                self.rebase_archive(target)
                 with closing(sqlite3.connect(target / 'collector.sqlite3')) as c, c: c.execute(sql)
                 with self.assertRaises(sqlite3.ProgrammingError): c.execute('SELECT 1')
                 with self.assertRaises(RuntimeError): f.inspect(target, self.manifest, phase='complete')
 
-    def test_startup_oracle_allows_only_strict_zero_queue_revision_and_empty_audit(self):
+    def rebase_archive(self, target):
+        # Copies are isolated synthetic oracle tests, never production migration.
+        original = Path(str(self.root / 'collector.sqlite3') + '.posting-retirement')
+        copied = Path(str(target / 'collector.sqlite3') + '.posting-retirement')
+        with closing(sqlite3.connect(copied / 'archive.sqlite3')) as c, c:
+            for rowid, path in c.execute('SELECT rowid,archive_path FROM files').fetchall():
+                c.execute('UPDATE files SET archive_path=? WHERE rowid=?', (str(copied / Path(path).relative_to(original)), rowid))
+
+    def test_archive_corruption_is_rejected_even_with_unchanged_active_data(self):
+        for sql in ("DELETE FROM archived_rows", "UPDATE archived_rows SET row_json='{}'", "DELETE FROM files"):
+            with self.subTest(sql=sql), tempfile.TemporaryDirectory() as temporary:
+                target = Path(temporary) / 'copy'; shutil.copytree(self.root, target)
+                self.rebase_archive(target)
+                # First prove this relocated synthetic copy still satisfies the oracle.
+                f.inspect(target, self.manifest, phase='complete')
+                archive = Path(str(target / 'collector.sqlite3') + '.posting-retirement') / 'archive.sqlite3'
+                with closing(sqlite3.connect(archive)) as c, c: c.execute(sql)
+                with self.assertRaises(RuntimeError): f.inspect(target, self.manifest, phase='complete')
+
+    def test_unmigrated_seed_is_not_an_accepted_startup(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); _, manifest = f.seed(root)
-            with closing(sqlite3.connect(root / 'collector.sqlite3')) as c, c:
-                c.execute('ALTER TABLE posting_jobs ADD COLUMN queue_revision INTEGER NOT NULL DEFAULT 0')
-                c.execute('CREATE TABLE posting_withdraw_history(id TEXT,job_id TEXT,owner_user_id TEXT,profile_id TEXT,expected_username TEXT,expected_actor_id TEXT,withdrawn_at TEXT)')
-            f.inspect(root, manifest, phase='startup')
-            with closing(sqlite3.connect(root / 'collector.sqlite3')) as c, c: c.execute('UPDATE posting_jobs SET queue_revision=1')
-            with self.assertRaisesRegex(RuntimeError, 'Startup'): f.inspect(root, manifest, phase='startup')
+            with self.assertRaisesRegex(RuntimeError, 'archive is missing'):
+                f.inspect(root, manifest, phase='startup')
 
     def test_renderer_selection_is_exact_and_never_uses_first_account_target(self):
         root = Path('/installed')
