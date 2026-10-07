@@ -18,8 +18,10 @@ class NurtureDeleteUIR41Tests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from playwright.async_api import async_playwright
         self.p=await async_playwright().start()
-        path=os.environ.get('IGAC_POSTING_TEST_BROWSER','')
+        self.addAsyncCleanup(self.p.stop)
+        path=os.environ.get('IGAC_TEST_CHROMIUM_EXECUTABLE','')
         self.browser=await self.p.chromium.launch(**({'executable_path':path} if path else {'channel':'chromium'}),headless=True,args=['--no-sandbox'])
+        self.addAsyncCleanup(self.browser.close)
         self.page=await self.browser.new_page(viewport={'width':1440,'height':960})
         async def route(request):
             url=request.request.url
@@ -30,10 +32,6 @@ class NurtureDeleteUIR41Tests(unittest.IsolatedAsyncioTestCase):
         await self.page.goto('https://nurture.fixture/')
         await self.page.get_by_role('button',name='异常任务',exact=True).click()
         await self.row('failed-one').wait_for()
-
-    async def asyncTearDown(self):
-        if hasattr(self,'browser'):await self.browser.close()
-        if hasattr(self,'p'):await self.p.stop()
 
     def row(self,ident):return self.page.locator('.nurture-job-card').filter(has_text=ident+'：')
 

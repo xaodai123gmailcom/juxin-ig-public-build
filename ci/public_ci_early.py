@@ -1,6 +1,16 @@
 """Mandatory offline Windows browser/native preflight for the exact R6.4 source."""
 import hashlib,json,os,subprocess,runpy,sys,shutil
 from pathlib import Path
+
+def verify_retained_browser_ui(python, env):
+    # These retained suites must use the already selected browser before the
+    # long full build. Missing required Chromium must fail, never become a skip.
+    for label, pattern in (
+            ('early-nurture-exception-ui', 'test_nurture_delete_ui_r41.py'),
+            ('early-relation-surface-ui', 'test_relation_surface_r51.py')):
+        run_owned(label, [python, '-I', '-X', 'utf8', 'scripts/run_backend_tests.py',
+                         '-p', pattern, '--case-timeout', '180', '-v'], 900, env)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from public_ci_common import ROOT, EARLY_FILES, run_owned, source_identity, bind_native, state_root, verify_run_state, require, preflight_early_evidence, digest
 from pathlib import Path
@@ -18,6 +28,7 @@ candidate=output/'r64-early-chrome.json'
 run_owned('early-browser-selection',[python,'-X','utf8','scripts/browser_build_policy.py','--candidate-output',str(candidate)],180)
 browser=json.loads(candidate.read_text(encoding='utf-8'));chrome=browser['executable'];assert Path(chrome).is_file()
 env=os.environ.copy();env.update(PYTHON=python,JUXIN_REQUIRE_RECOVERY_UI_NATIVE='1',IGAC_TEST_CHROMIUM_EXECUTABLE=chrome,IGAC_REQUIRE_COLLECTION_BROWSER='1',IGAC_REQUIRE_NURTURE_BROWSER='1',IGAC_REQUIRE_PROFILE_BROWSER='1',IGAC_REQUIRE_STANDALONE_NURTURE_BROWSER='1',IGAC_REQUIRE_FINAL_SEED_BROWSER='1',JUXIN_REQUIRE_NURTURE_CLEANUP_NATIVE='1',IGAC_FINAL_SEED_FIXTURE_ARTIFACT_DIR=str(output/'final-seed-fixtures'))
+verify_retained_browser_ui(python, env)
 # Exercise the previously failing offline fixtures before the long suite.
 # This group remains mandatory in its original release gate as well.
 run_owned('early-saturation-focused-precheck', [python, '-X', 'utf8', 'scripts/run_backend_tests.py',

@@ -22,13 +22,14 @@ class RelationSurfaceR51Tests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from playwright.async_api import async_playwright
         self.p = await async_playwright().start()
-        path = os.environ.get('IGAC_POSTING_TEST_BROWSER', '')
+        self.addAsyncCleanup(self.p.stop)
+        path = os.environ.get('IGAC_TEST_CHROMIUM_EXECUTABLE', '')
         if not path and not Path(self.p.chromium.executable_path).is_file():
-            await self.p.stop()
             if os.environ.get('IGAC_REQUIRE_COLLECTION_BROWSER') == '1':
                 self.fail('Required Chromium runtime is missing')
             self.skipTest('Chromium required for relation surface fixtures')
         self.browser = await self.p.chromium.launch(**({'executable_path':path} if path else {'channel':'chromium'}), headless=True, args=['--no-sandbox'])
+        self.addAsyncCleanup(self.browser.close)
         self.context = await self.browser.new_context()
         self.html = page_html(dialog(hidden=True))
         self.requests = []
@@ -42,11 +43,6 @@ class RelationSurfaceR51Tests(unittest.IsolatedAsyncioTestCase):
         self.worker.page = self.page
         self.worker._guard = AsyncMock()
         self.worker.relation_surface_wait_seconds = .8
-
-    async def asyncTearDown(self):
-        if hasattr(self, 'browser'):
-            await self.browser.close()
-            await self.p.stop()
 
     async def show(self, html, url='https://www.instagram.com/source/'):
         self.html = html

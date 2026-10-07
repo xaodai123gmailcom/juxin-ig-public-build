@@ -13,7 +13,7 @@ import tempfile
 import traceback
 from types import SimpleNamespace, TracebackType
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -919,6 +919,138 @@ class ParentFailureDiagnostics(unittest.TestCase):
             save.assert_not_called()
             result=json.loads((Path(directory)/'build-result.json').read_text())
             self.assertEqual(result['status'],'passed');self.assertEqual(result['hashes'],{'proof':'synthetic'})
+
+
+class RetainedBrowserFixtureContracts(unittest.TestCase):
+    FIXTURES=('test_nurture_delete_ui_r41.py','test_relation_surface_r51.py')
+
+    def run_fixture(self, filename, *, selected='', legacy='', bundled=True,
+                    required=True, fail_at=None):
+        """Run the real setup and unittest cleanup, with all browser edges fake."""
+        source=HERE.parent/'backend/tests'/filename
+        tree=ast.parse(source.read_text(encoding='utf-8'))
+        fixture=next(node for node in tree.body if isinstance(node,ast.ClassDef))
+        setup=next(node for node in fixture.body if isinstance(node,ast.AsyncFunctionDef)
+                   and node.name=='asyncSetUp')
+        self.assertFalse(any(getattr(node,'name',None)=='asyncTearDown' for node in fixture.body),
+                         'Owned resources must be released even when setup fails')
+        events=[]
+        async def close_browser():events.append('browser')
+        async def stop_driver():events.append('driver')
+        page=SimpleNamespace(route=AsyncMock(),goto=AsyncMock(
+            side_effect=RuntimeError('synthetic page failure') if fail_at=='page' else None))
+        element=SimpleNamespace(click=AsyncMock(),wait_for=AsyncMock())
+        page.get_by_role=Mock(return_value=element)
+        context=SimpleNamespace(route=AsyncMock(),new_page=AsyncMock(return_value=page))
+        browser=SimpleNamespace(new_page=AsyncMock(return_value=page),
+            new_context=AsyncMock(return_value=context),close=AsyncMock(side_effect=close_browser))
+        launch=AsyncMock(return_value=browser,
+            side_effect=RuntimeError('synthetic launch failure') if fail_at=='launch' else None)
+        driver=SimpleNamespace(stop=AsyncMock(side_effect=stop_driver))
+        start=AsyncMock(return_value=driver)
+        api=SimpleNamespace(async_playwright=lambda:SimpleNamespace(start=start))
+        namespace={'os':os,'Path':Path,'AsyncMock':AsyncMock,
+                   'PlaywrightWorker':lambda *args:SimpleNamespace(),
+                   'page_html':lambda *args,**kwargs:'synthetic html',
+                   'dialog':lambda *args,**kwargs:'synthetic dialog'}
+        exec(compile(ast.Module(body=[setup],type_ignores=[]),str(source),'exec'),namespace)
+        async def probe(case):
+            if fail_at=='body':case.fail('synthetic body failure')
+        case_type=type('OwnedBrowserFixtureCase',(unittest.IsolatedAsyncioTestCase,),
+            {'asyncSetUp':namespace['asyncSetUp'],'test_probe':probe,
+             'row':lambda case,ident:element})
+        with tempfile.TemporaryDirectory() as temporary:
+            executable=Path(temporary)/'bundled-reference'
+            if bundled:executable.write_text('not executable; browser dependencies are mocked')
+            driver.chromium=SimpleNamespace(executable_path=str(executable),launch=launch)
+            case=case_type('test_probe');case.bundle=Path(temporary)/'fixture.js'
+            env={'IGAC_TEST_CHROMIUM_EXECUTABLE':selected,'IGAC_POSTING_TEST_BROWSER':legacy,
+                 'IGAC_REQUIRE_COLLECTION_BROWSER':'1' if required else '0'}
+            with patch.dict(os.environ,env),patch.dict(sys.modules,
+                    {'playwright':SimpleNamespace(),'playwright.async_api':api}):
+                result=unittest.TestResult();case.run(result)
+        return SimpleNamespace(result=result,launch=launch,driver=driver,browser=browser,events=events)
+
+    def test_selected_browser_wins_over_legacy_and_missing_bundle(self):
+        selected=r'C:\synthetic\中文 fixture\Chrome\chrome.exe'
+        for filename in self.FIXTURES:
+            with self.subTest(filename=filename):
+                observed=self.run_fixture(filename,selected=selected,legacy='wrong-legacy-browser',bundled=False)
+                self.assertTrue(observed.result.wasSuccessful(),observed.result.errors)
+                self.assertEqual([],observed.result.skipped)
+                observed.launch.assert_awaited_once_with(executable_path=selected,
+                    headless=True,args=['--no-sandbox'])
+                self.assertEqual(['browser','driver'],observed.events)
+
+    def test_bundled_channel_is_preserved_without_a_selected_browser(self):
+        for filename in self.FIXTURES:
+            with self.subTest(filename=filename):
+                observed=self.run_fixture(filename,legacy='wrong-legacy-browser')
+                self.assertTrue(observed.result.wasSuccessful(),observed.result.errors)
+                self.assertEqual([],observed.result.skipped)
+                observed.launch.assert_awaited_once_with(channel='chromium',
+                    headless=True,args=['--no-sandbox'])
+                self.assertEqual(['browser','driver'],observed.events)
+
+    def test_owned_cleanup_runs_on_launch_page_and_test_failures(self):
+        for filename in self.FIXTURES:
+            for stage in ('launch','page','body'):
+                with self.subTest(filename=filename,stage=stage):
+                    observed=self.run_fixture(filename,selected='selected-browser',fail_at=stage)
+                    self.assertFalse(observed.result.wasSuccessful())
+                    self.assertEqual([],observed.result.skipped)
+                    self.assertEqual(1,len(observed.result.errors)+len(observed.result.failures))
+                    observed.driver.stop.assert_awaited_once()
+                    self.assertEqual(['driver'] if stage=='launch' else ['browser','driver'],observed.events)
+
+    def test_missing_required_relation_browser_fails_instead_of_skipping(self):
+        observed=self.run_fixture('test_relation_surface_r51.py',bundled=False)
+        self.assertEqual(1,len(observed.result.failures));self.assertEqual([],observed.result.skipped)
+        observed.launch.assert_not_awaited();self.assertEqual(['driver'],observed.events)
+        optional=self.run_fixture('test_relation_surface_r51.py',bundled=False,required=False)
+        self.assertEqual(1,len(optional.result.skipped));optional.launch.assert_not_awaited()
+        self.assertEqual(['driver'],optional.events)
+
+    def test_real_ui_groups_are_direct_mandatory_early_calls_with_selected_browser(self):
+        source=HERE/'public_ci_early.py';tree=ast.parse(source.read_text(encoding='utf-8'))
+        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef)
+                      and node.name=='verify_retained_browser_ui')
+        calls=[];namespace={'run_owned':lambda *args:calls.append(args)}
+        exec(compile(ast.Module(body=[function],type_ignores=[]),str(source),'exec'),namespace)
+        env={'IGAC_TEST_CHROMIUM_EXECUTABLE':'selected-Chrome','IGAC_REQUIRE_COLLECTION_BROWSER':'1'}
+        expected=[(label,['project-python','-I','-X','utf8','scripts/run_backend_tests.py',
+                   '-p',pattern,'--case-timeout','180','-v'],900,env)
+                  for label,pattern in [('early-nurture-exception-ui',self.FIXTURES[0]),
+                                        ('early-relation-surface-ui',self.FIXTURES[1])]]
+        namespace['verify_retained_browser_ui']('project-python',env)
+        self.assertEqual(expected,calls)
+        for failed in expected:
+            calls.clear();failure=RuntimeError('synthetic browser gate failure')
+            def fail(*args):
+                calls.append(args)
+                if args[0]==failed[0]:raise failure
+            namespace['run_owned']=fail
+            with self.assertRaises(RuntimeError) as caught:
+                namespace['verify_retained_browser_ui']('project-python',env)
+            self.assertIs(caught.exception,failure)
+            self.assertEqual(expected[:expected.index(failed)+1],calls)
+        direct=[(index,node.value) for index,node in enumerate(tree.body)
+                if isinstance(node,ast.Expr) and isinstance(node.value,ast.Call)]
+        invocation=[(i,node) for i,node in direct if isinstance(node.func,ast.Name)
+                    and node.func.id=='verify_retained_browser_ui']
+        self.assertEqual(1,len(invocation));index,node=invocation[0]
+        self.assertEqual(['python','env'],[argument.id for argument in node.args])
+        env_update=next((i,node) for i,node in direct if isinstance(node.func,ast.Attribute)
+                        and isinstance(node.func.value,ast.Name) and node.func.value.id=='env'
+                        and node.func.attr=='update')
+        keywords={keyword.arg:keyword.value for keyword in env_update[1].keywords}
+        self.assertEqual('chrome',keywords['IGAC_TEST_CHROMIUM_EXECUTABLE'].id)
+        self.assertEqual('1',ast.literal_eval(keywords['IGAC_REQUIRE_COLLECTION_BROWSER']))
+        saturation=next(i for i,node in direct if isinstance(node.func,ast.Name)
+                        and node.func.id=='run_owned' and node.args
+                        and isinstance(node.args[0],ast.Constant)
+                        and node.args[0].value=='early-saturation-focused-precheck')
+        self.assertLess(env_update[0],index);self.assertLess(index,saturation)
 
 
 if __name__=='__main__':
