@@ -5405,14 +5405,17 @@ class ExecutionManager:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Do not release a logical write lock before its SQLite thread commits.
+        """Keep SQLite calls owned until their thread finishes and closes handles.
 
         Cancelling ``asyncio.to_thread`` only cancels the awaiting coroutine; the
         worker thread continues.  In the parallel relation pipeline that could release
         ``checkpoint_lock`` and let the Stop cleanup write a newer cursor before an
-        older background upsert finally committed over it.  Drain the already
-        started local write (SQLite has its own bounded busy timeout), remember every
-        cancellation request, then re-raise cancellation after the commit settles.
+        older background upsert finally committed over it. Reads also own open
+        connections: joining a cancelled coroutine is not enough before pipeline
+        cleanup or database removal. Drain the started call, remember every
+        cancellation request, then re-raise cancellation after it settles. SQLite's
+        busy timeout bounds lock contention, not the total thread lifetime; never
+        abandon an open connection merely because a cleanup deadline elapsed.
         """
 
         operation = asyncio.create_task(
@@ -5487,7 +5490,7 @@ class ExecutionManager:
             retained = list(held.items())
             for offset in range(0, len(retained), 100):
                 batch = retained[offset:offset + 100]
-                terminal = await asyncio.to_thread(
+                terminal = await self._await_durable_thread_call(
                     self.service.terminal_task_mode_candidate_usernames,
                     control.owner_user_id, control.task_id, target_id, mode,
                     [username for username, _ in batch],
@@ -5559,7 +5562,7 @@ class ExecutionManager:
                 async with candidate_reservation_lock:
                     candidate = None
                     while candidate is None:
-                        pending_page = await asyncio.to_thread(
+                        pending_page = await self._await_durable_thread_call(
                             self.service.list_pending_task_mode_candidates,
                             control.owner_user_id,
                             control.task_id,
@@ -5603,7 +5606,7 @@ class ExecutionManager:
                     # deferred set. A terminal write may also have settled a held page.
                     return await finish_drain(stats)
             else:
-                candidates = await asyncio.to_thread(
+                candidates = await self._await_durable_thread_call(
                     self.service.list_pending_task_mode_candidates,
                     control.owner_user_id,
                     control.task_id,
@@ -5685,7 +5688,7 @@ class ExecutionManager:
                     self._record_profile_progress(control, current_stage="screening_accounts")
                     processed_since_checkpoint += 1
                     if processed_since_checkpoint >= 10:
-                        stats = await asyncio.to_thread(
+                        stats = await self._await_durable_thread_call(
                             self.service.task_mode_candidate_stats,
                             control.owner_user_id,
                             control.task_id,
@@ -5751,7 +5754,7 @@ class ExecutionManager:
                         candidate_available.set()
                     if capacity_changed is not None:
                         capacity_changed.set()
-            stats = await asyncio.to_thread(
+            stats = await self._await_durable_thread_call(
                 self.service.task_mode_candidate_stats,
                 control.owner_user_id,
                 control.task_id,
@@ -5892,7 +5895,7 @@ class ExecutionManager:
                 if control.stop_event.is_set():
                     raise asyncio.CancelledError
                 capacity_changed.clear()
-                current = await asyncio.to_thread(self.service.task_mode_candidate_stats,
+                current = await self._await_durable_thread_call(self.service.task_mode_candidate_stats,
                     control.owner_user_id, control.task_id, target_id, mode)
                 if not active_screeners:
                     failure = screening_capacity_failure()
@@ -5936,7 +5939,7 @@ class ExecutionManager:
                 await check_source_controls()
                 capacity_changed.clear()
                 async with reservation_lock:
-                    pending = await asyncio.to_thread(
+                    pending = await self._await_durable_thread_call(
                         self.service.list_pending_task_mode_candidates,
                         control.owner_user_id, control.task_id, target_id, mode,
                         limit=len(reservations) + 1,
@@ -5993,7 +5996,7 @@ class ExecutionManager:
                 # its snapshot. Read the maintained counters under the same lock
                 # as the checkpoint write so an older producer snapshot cannot
                 # roll processed/saved counts backwards after screening progresses.
-                current = await asyncio.to_thread(
+                current = await self._await_durable_thread_call(
                     self.service.task_mode_candidate_stats,
                     control.owner_user_id, control.task_id, target_id, mode,
                 )
@@ -6054,7 +6057,7 @@ class ExecutionManager:
                     and observed_epoch >= 0
                 ):
                     progress_epoch = observed_epoch
-                current = await asyncio.to_thread(
+                current = await self._await_durable_thread_call(
                     self.service.task_mode_candidate_stats,
                     control.owner_user_id,
                     control.task_id,
@@ -6106,7 +6109,7 @@ class ExecutionManager:
                 return await legacy_candidate_sink(batch, previews)
             if previews is not None:
                 raise WorkerExecutionError('直接采集不应提交悬浮卡结果', reason='collection_handoff_protocol_error')
-            result = await asyncio.to_thread(self.service.task_mode_candidate_stats,
+            result = await self._await_durable_thread_call(self.service.task_mode_candidate_stats,
                 control.owner_user_id, control.task_id, target_id, mode)
             checkpoint_pending = False
 
@@ -6118,7 +6121,7 @@ class ExecutionManager:
                     # A cancelled durable call may have committed without
                     # returning its counters. Read committed state under the same
                     # lock as the checkpoint, including any child progress.
-                    current = await asyncio.to_thread(
+                    current = await self._await_durable_thread_call(
                         self.service.task_mode_candidate_stats,
                         control.owner_user_id, control.task_id, target_id, mode,
                     )
@@ -6191,7 +6194,7 @@ class ExecutionManager:
             previous_pending_confirmed = getattr(worker, "relation_pending_confirmed_usernames", None)
             worker.collection_checkpoint = checkpoint
             async def duplicate_check(username: str) -> bool:
-                result = await asyncio.to_thread(
+                result = await self._await_durable_thread_call(
                     self.service.should_skip_relationship_hover,
                     control.owner_user_id, username,
                     source=mode, source_target=target_id,
@@ -6208,7 +6211,7 @@ class ExecutionManager:
                 worker.relation_pending_confirmed_usernames = confirmed_pending
                 worker.hover_duplicate_check = duplicate_check
                 worker.hover_capacity_checkpoint = wait_for_screening_capacity if parallel_children else None
-            pass_candidate_count = (await asyncio.to_thread(
+            pass_candidate_count = (await self._await_durable_thread_call(
                 self.service.task_mode_candidate_stats,
                 control.owner_user_id, control.task_id, target_id, mode))["total"]
             try:
@@ -6243,7 +6246,7 @@ class ExecutionManager:
                                 and observed_source_total >= 0
                             ):
                                 source_total = observed_source_total
-                            current = await asyncio.to_thread(
+                            current = await self._await_durable_thread_call(
                                 self.service.task_mode_candidate_stats,
                                 control.owner_user_id, control.task_id, target_id, mode,
                             )
@@ -6376,7 +6379,7 @@ class ExecutionManager:
             })
             if not list_error:
                 return False
-            current = await asyncio.to_thread(self.service.task_mode_candidate_stats,
+            current = await self._await_durable_thread_call(self.service.task_mode_candidate_stats,
                 control.owner_user_id, control.task_id, target_id, mode)
             # With no queue to drain, preserve the existing error path. Writing
             # an empty screening checkpoint would invent a last-success time for
@@ -6641,7 +6644,7 @@ class ExecutionManager:
                         # A sibling cannot erase this notification, even if it
                         # finishes before the waiter receives its first time slice.
                         available_signal = candidate_available.subscribe()
-                        current = await asyncio.to_thread(
+                        current = await self._await_durable_thread_call(
                             self.service.task_mode_candidate_stats,
                             control.owner_user_id,
                             control.task_id,
@@ -6979,7 +6982,7 @@ class ExecutionManager:
         # so), and every child has joined. One common parent drain handles both
         # healthy leftovers and accelerator failures without a second full pass.
         if direct_handoff:
-            stats = await asyncio.to_thread(self.service.task_mode_candidate_stats,
+            stats = await self._await_durable_thread_call(self.service.task_mode_candidate_stats,
                 control.owner_user_id, control.task_id, target_id, mode)
             if stats['pending'] and not candidate_failures:
                 error = screening_capacity_failure() or PlaywrightWorker._page_recovery_exhausted(
@@ -7010,7 +7013,7 @@ class ExecutionManager:
             )
         if candidate_failures and stats["pending"]:
             await write_progress(stats, complete=discovery_complete, stage="screening_accounts")
-            pending_page = await asyncio.to_thread(
+            pending_page = await self._await_durable_thread_call(
                 self.service.list_pending_task_mode_candidates,
                 control.owner_user_id, control.task_id, target_id, mode, limit=100,
             )

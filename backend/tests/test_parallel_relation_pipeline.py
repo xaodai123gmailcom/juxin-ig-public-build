@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,52 @@ from app.service import CoreService
 
 
 PASSWORD = "parallel-relation-pipeline-password"
+
+
+class _HeldDatabaseRead:
+    """Hold one real SQLite connection until the test releases its read."""
+
+    def __init__(self, service, original, *, should_hold=lambda: True, error=None):
+        self.service = service
+        self.original = original
+        self.should_hold = should_hold
+        self.error = error
+        self.loop = asyncio.get_running_loop()
+        self.started = asyncio.Event()
+        self.closed = asyncio.Event()
+        self.release = threading.Event()
+        self.connection_closed = threading.Event()
+        self._lock = threading.Lock()
+        self._held = False
+
+    def __call__(self, *args, **kwargs):
+        with self._lock:
+            hold = not self._held and self.should_hold()
+            self._held = self._held or hold
+        if not hold:
+            return self.original(*args, **kwargs)
+        try:
+            with self.service.database.read() as connection:
+                connection.execute("SELECT COUNT(*) FROM task_mode_candidates").fetchone()
+                self.loop.call_soon_threadsafe(self.started.set)
+                # The owning test always releases/joins this injected stall in
+                # finally. The normal per-case watchdog still fails closed.
+                self.release.wait()
+                result = self.original(*args, **kwargs)
+                if self.error is not None:
+                    raise self.error
+                return result
+        finally:
+            self.connection_closed.set()
+            self.loop.call_soon_threadsafe(self.closed.set)
+
+
+async def _event_loop_turn() -> None:
+    """Let already-queued cancellation callbacks run without a timing sleep."""
+    loop = asyncio.get_running_loop()
+    advanced = loop.create_future()
+    loop.call_soon(advanced.set_result, None)
+    await advanced
 
 
 class _NoopBitBrowser:
@@ -452,6 +500,167 @@ class ParallelRelationPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([], state.screened)
         pending = self.service.task_mode_candidate_stats(self.user["id"], task["id"], target["id"], "followers")
         self.assertEqual(3, pending["pending"])
+
+    async def test_exhausted_replacement_joins_sibling_read_before_cleanup(self) -> None:
+        task, target, control = self._task_and_control()
+        state = _PipelineState(prefix="held_read")
+        read_owner = contextvars.ContextVar("pipeline_read_owner", default=None)
+        reader_drain_finished = asyncio.Event()
+        reader_close_states: list[bool] = []
+        failure = WorkerExecutionError(
+            "new page still stalled", reason="instagram_page_recovery_exhausted",
+            pause_required=True,
+        )
+
+        class FailingChild(_ScreeningChild):
+            async def screen(self, username: str) -> None:
+                self.state.screen_started.set()
+                await held_read.started.wait()
+                raise failure
+
+        class ReadingChild(_ScreeningChild):
+            async def disconnect(self) -> None:
+                reader_close_states.append(held_read.connection_closed.is_set())
+                await super().disconnect()
+
+        first_child = FailingChild(state)
+        reading_child = ReadingChild(state)
+
+        class Parent(_RelationParent):
+            async def create_parallel_screening_worker(self):
+                self.create_calls += 1
+                return first_child if self.create_calls == 1 else reading_child
+
+        class Manager(_PipelineManager):
+            async def _drain_candidate_spool(self, control, worker, *args, **kwargs):
+                if worker is reading_child:
+                    await state.screen_started.wait()
+                token = read_owner.set(worker)
+                try:
+                    return await super()._drain_candidate_spool(control, worker, *args, **kwargs)
+                finally:
+                    read_owner.reset(token)
+                    if worker is reading_child and held_read.started.is_set():
+                        reader_drain_finished.set()
+
+        original_read = self.service.list_pending_task_mode_candidates
+        held_read = _HeldDatabaseRead(
+            self.service, original_read,
+            should_hold=lambda: read_owner.get() is reading_child,
+        )
+        self.service.list_pending_task_mode_candidates = held_read
+        parent = Parent(state, child=first_child, block_source=True)
+        manager = Manager(self.service, _NoopBitBrowser())
+        running = asyncio.create_task(wait_for_collection_operation(
+            lambda: manager._execute_candidate_spooled_mode(
+                control, parent, target, "followers", task["settings"], None,
+            ), manager, self.service, control.owner_user_id, control.task_id,
+        ))
+        try:
+            await asyncio.wait_for(state.source_cancelled.wait(), 10)
+            # settle_pipeline cancels source and siblings in one synchronous
+            # step. Observe those queued cancellations before releasing SQLite.
+            await _event_loop_turn()
+            self.assertFalse(reader_drain_finished.is_set(), "cancelled reader lost ownership")
+            self.assertFalse(held_read.connection_closed.is_set())
+            self.assertFalse(running.done())
+            self.assertEqual([], reader_close_states)
+            held_read.release.set()
+            with self.assertRaises(WorkerExecutionError) as error:
+                await asyncio.wait_for(running, 10)
+            self.assertIs(failure, error.exception)
+            self.assertTrue(held_read.connection_closed.is_set())
+            self.assertEqual([True], reader_close_states)
+            self.assertTrue(state.source_cancelled.is_set())
+            self.assertEqual([], state.screened)
+            self.assertFalse(parent.parent_screened_while_source_running)
+            self.assertEqual(1, first_child.disconnect_calls)
+            self.assertEqual(1, reading_child.disconnect_calls)
+            pending = self.service.task_mode_candidate_stats(
+                self.user["id"], task["id"], target["id"], "followers",
+            )
+            self.assertEqual(3, pending["pending"])
+        finally:
+            held_read.release.set()
+            if not running.done():
+                running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            if held_read.started.is_set():
+                await asyncio.wait_for(held_read.closed.wait(), 10)
+            self.service.list_pending_task_mode_candidates = original_read
+
+    async def test_cancelled_read_keeps_reservation_through_repeated_cancel_and_late_error(self):
+        for late_error in (None, OSError("late SQLite read failure")):
+            with self.subTest(late_error=late_error is not None):
+                task, target, control = self._task_and_control(1)
+                self.service.append_task_mode_candidates(
+                    self.user["id"], task["id"], target["id"], "followers", ["held_candidate"],
+                )
+                original_read = self.service.list_pending_task_mode_candidates
+                held_read = _HeldDatabaseRead(self.service, original_read, error=late_error)
+                self.service.list_pending_task_mode_candidates = held_read
+                manager = _PipelineManager(self.service, _NoopBitBrowser())
+                state = _PipelineState()
+                child = _ScreeningChild(state)
+                reservation_lock = asyncio.Lock()
+                reservations: set[str] = set()
+                running = asyncio.create_task(manager._drain_candidate_spool(
+                    control, child, target["id"], "followers", task["settings"],
+                    discovery_complete=False, candidate_reservation_lock=reservation_lock,
+                    candidate_reservations=reservations,
+                ))
+                try:
+                    await asyncio.wait_for(held_read.started.wait(), 10)
+                    for _ in range(3):
+                        running.cancel()
+                        await _event_loop_turn()
+                        self.assertFalse(running.done(), "read owner returned before connection close")
+                        self.assertTrue(reservation_lock.locked())
+                        self.assertFalse(held_read.connection_closed.is_set())
+                    held_read.release.set()
+                    with self.assertRaises(asyncio.CancelledError) as cancelled:
+                        await asyncio.wait_for(running, 10)
+                    self.assertIs(late_error, cancelled.exception.__cause__)
+                    self.assertTrue(held_read.connection_closed.is_set())
+                    self.assertFalse(reservation_lock.locked())
+                    self.assertEqual(set(), reservations)
+                    self.assertEqual([], state.screened)
+                    self.assertEqual(1, self.service.task_mode_candidate_stats(
+                        self.user["id"], task["id"], target["id"], "followers",
+                    )["pending"])
+                finally:
+                    held_read.release.set()
+                    if not running.done():
+                        running.cancel()
+                    await asyncio.gather(running, return_exceptions=True)
+                    if held_read.started.is_set():
+                        await asyncio.wait_for(held_read.closed.wait(), 10)
+                    self.service.list_pending_task_mode_candidates = original_read
+
+    async def test_owned_read_preserves_success_and_uncancelled_error(self):
+        result = object()
+        failure = OSError("uncancelled SQLite read failure")
+        for expected_error in (None, failure):
+            with self.subTest(error=expected_error is not None):
+                held_read = _HeldDatabaseRead(
+                    self.service, lambda: result, error=expected_error,
+                )
+                running = asyncio.create_task(ExecutionManager._await_durable_thread_call(held_read))
+                try:
+                    await asyncio.wait_for(held_read.started.wait(), 10)
+                    held_read.release.set()
+                    if expected_error is None:
+                        self.assertIs(result, await asyncio.wait_for(running, 10))
+                    else:
+                        with self.assertRaises(OSError) as error:
+                            await asyncio.wait_for(running, 10)
+                        self.assertIs(failure, error.exception)
+                    self.assertTrue(held_read.connection_closed.is_set())
+                finally:
+                    held_read.release.set()
+                    await asyncio.gather(running, return_exceptions=True)
+                    if held_read.started.is_set():
+                        await asyncio.wait_for(held_read.closed.wait(), 10)
 
     async def test_candidate_page_failure_keeps_source_and_checkpoint_then_retries_retained_page(self):
         from app.playwright_worker import WorkerExecutionError

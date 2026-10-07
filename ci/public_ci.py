@@ -73,6 +73,13 @@ def early():
     run_owned('early-service-startup-regressions', [python, '-I', '-X', 'utf8',
               'scripts/run_backend_tests.py', '-p', 'test_frozen_service_r94.py',
               '--case-timeout', '180', '-v'], 600)
+    # Own cancelled SQLite reads until their connections close. Exercise the
+    # real pipeline before expensive browser work; original build gates remain.
+    for label, pattern in (
+            ('early-pipeline-read-ownership', 'test_parallel_relation_pipeline.py'),
+            ('early-durable-cancellation-barrier', 'test_durable_cancellation_barrier.py')):
+        run_owned(label, [python, '-I', '-X', 'utf8', 'scripts/run_backend_tests.py',
+                  '-p', pattern, '--case-timeout', '180', '-v'], 600)
     run_owned('unicode-source-runtime', [sys.executable, '-I', '-X', 'utf8',
               str(ROOT / 'ci/public_ci_unicode.py'), 'source'], 3600)
     run_owned('early-node-dependencies', ['npm.cmd', 'ci', '--include=dev', '--no-audit', '--no-fund'], 900)

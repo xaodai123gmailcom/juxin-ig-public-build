@@ -285,7 +285,9 @@ class PublicContracts(unittest.TestCase):
                 [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
                  'scripts/run_backend_tests.py','-p','test_frozen_service_r94.py',
                  '--case-timeout','180','-v'],600))
-            self.assertEqual(calls[8][0],'unicode-source-runtime')
+            self.assertEqual([call[0] for call in calls[8:11]],[
+                'early-pipeline-read-ownership', 'early-durable-cancellation-barrier',
+                'unicode-source-runtime'])
             startup_calls=calls[:8]
             calls.clear();failure=RuntimeError('mock real startup regression')
             def fail_startup(*args):
@@ -308,6 +310,36 @@ class PublicContracts(unittest.TestCase):
         package=json.loads((HERE.parent/'package.json').read_text())
         self.assertIn('python scripts/tests/test_owned_process_r64.py && '
                       'python scripts/tests/test_owned_process_windows_r64.py && ',package['scripts']['test:source'])
+
+    def test_sqlite_thread_ownership_prechecks_are_additive_early_and_fail_closed(self):
+        root=Path('/synthetic');calls=[]
+        expected=[(label,[str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
+            'scripts/run_backend_tests.py','-p',pattern,'--case-timeout','180','-v'],600)
+            for label,pattern in (
+                ('early-pipeline-read-ownership','test_parallel_relation_pipeline.py'),
+                ('early-durable-cancellation-barrier','test_durable_cancellation_barrier.py'))]
+        with patch.object(ci,'ROOT',root),patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
+             patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
+             patch.object(ci,'state_root',return_value=root/'state'),patch.object(ci,'digest',return_value='a'*64),\
+             patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
+            ci.early()
+            labels=[call[0] for call in calls]
+            first=labels.index('early-service-startup-regressions')+1
+            self.assertEqual(calls[first:first+2],expected)
+            self.assertLess(labels.index('early-python-dependencies'),first)
+            self.assertEqual(labels[first+2],'unicode-source-runtime')
+            self.assertIn('early-all-required-regressions',labels[first+3:])
+            successful_calls=list(calls)
+            for failed in expected:
+                with self.subTest(gate=failed[0]):
+                    calls.clear();failure=RuntimeError('synthetic owned-read precheck failure')
+                    def fail(*args):
+                        calls.append(args)
+                        if args[0]==failed[0]:raise failure
+                    with patch.object(ci,'run_owned',side_effect=fail),self.assertRaises(RuntimeError) as caught:
+                        ci.early()
+                    self.assertIs(caught.exception,failure)
+                    self.assertEqual(calls,successful_calls[:successful_calls.index(failed)+1])
 
     def test_retained_navigation_contract_is_additive_early_and_fail_closed(self):
         root=Path('/synthetic');calls=[]
