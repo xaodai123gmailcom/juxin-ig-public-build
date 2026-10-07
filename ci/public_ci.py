@@ -79,6 +79,9 @@ def early():
     run_owned('early-retained-report-regressions', [python, '-I', '-X', 'utf8',
               'scripts/run_backend_tests.py', '-p', 'test_continuation.py',
               '--case-timeout', '180', '-v'], 600)
+    run_owned('early-window-snapshot-performance', [python, '-I', '-X', 'utf8',
+              'scripts/run_backend_tests.py', '-p', 'test_window_performance_r33.py',
+              '--case-timeout', '180', '-v'], 600)
     for target in ('build:ui', 'build:electron'):
         run_owned('early-' + target.replace(':', '-'), ['npm.cmd', 'run', target], 600)
     for pattern in ('test_python_environment.py', 'test_timezone_data_r57.py'):

@@ -301,9 +301,16 @@ class PublicContracts(unittest.TestCase):
             self.assertEqual([call for call in calls if call[0]==report[0]],[report])
             self.assertEqual(labels.index(report[0]),labels.index(expected[0])+1)
             self.assertLess(labels.index(report[0]),labels.index('early-build-ui'))
+            performance=('early-window-snapshot-performance',
+                    [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
+                     'scripts/run_backend_tests.py','-p','test_window_performance_r33.py',
+                     '--case-timeout','180','-v'],600)
+            self.assertEqual([call for call in calls if call[0]==performance[0]],[performance])
+            self.assertEqual(labels.index(performance[0]),labels.index(report[0])+1)
+            self.assertLess(labels.index(performance[0]),labels.index('early-build-ui'))
             self.assertIn('early-all-required-regressions',labels)
             all_calls=list(calls)
-            for failed in (expected,report):
+            for failed in (expected,report,performance):
                 calls.clear();failure=RuntimeError('mock retained product mismatch')
                 def fail(*args):
                     calls.append(args)

@@ -7407,11 +7407,12 @@ class CoreService:
         for row in retired_holds:
             if row['profile_id'] in visible_profiles:
                 continue
+            owned = row['owner_user_id'] == requesting_user_id and not row['_legacy_owner_ambiguous']
             result.append({'profile_id': row['profile_id'], 'operation_type': 'account',
-                'state': 'occupied', 'owned_by_current_login': row['owner_user_id'] == requesting_user_id,
+                'state': 'occupied', 'owned_by_current_login': owned,
                 'entity_id': None, 'acquired_at': row['created_at'],
                 'heartbeat_at': None, 'expires_at': None,
-                **({'can_reconcile_window_state': True} if row['owner_user_id'] == requesting_user_id else {})})
+                **({'can_reconcile_window_state': True} if owned else {})})
             visible_profiles.add(row['profile_id'])
         return result
 

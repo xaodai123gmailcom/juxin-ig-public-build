@@ -82,6 +82,269 @@ class WindowPerformanceR33Tests(unittest.TestCase):
         self.assertEqual(1, sum(method == 'inventory' for method, _ in self.bridge.calls))
         self.assertTrue(all(plan['proxy_server'] == 'http://old.proxy.test:8080' for plan in snapshot['plans']))
 
+    def _snapshot_work(self):
+        original = self.db._connect
+        counts = {'connections': 0, 'statements': 0, 'instructions': 0}
+        calls_before = len(self.bridge.calls)
+        def trace(sql):
+            counts['statements'] += 1
+        def progress():
+            counts['instructions'] += 100
+            return 0
+        def connect():
+            counts['connections'] += 1
+            connection = original()
+            connection.set_trace_callback(trace)
+            connection.set_progress_handler(progress, 100)
+            return connection
+        self.db._connect = connect
+        try:
+            snapshot = self.accounts.snapshot(self.owner)
+        finally:
+            self.db._connect = original
+        self.assertEqual(1, sum(method == 'inventory' for method, _ in self.bridge.calls[calls_before:]))
+        return snapshot, counts
+
+    def _legacy_studio(self, connection, ident, profile, *, owner=None, **fields):
+        values = dict(id=ident, owner_user_id=owner or self.owner, request_key=ident,
+                      kind='posting', profile_id=profile, status='queued', config_json='{}',
+                      result_json='{}', due_at='2026-01-01', created_at='2026-01-01',
+                      updated_at='2026-01-01')
+        values.update(fields)
+        connection.execute('INSERT INTO studio_jobs(' + ','.join(values) + ') VALUES(' +
+                           ','.join('?' for _ in values) + ')', tuple(values.values()))
+
+    def _legacy_posting(self, connection, ident, profile, *, owner=None, **fields):
+        values = dict(id=ident, owner_user_id=owner or self.owner, request_key=ident,
+                      theme='fixture', caption='retained', profile_id=profile,
+                      status='queued', created_at='2026-01-01', updated_at='2026-01-01')
+        values.update(fields)
+        connection.execute('INSERT INTO posting_jobs(' + ','.join(values) + ') VALUES(' +
+                           ','.join('?' for _ in values) + ')', tuple(values.values()))
+
+    def _legacy_lease(self, connection, ident, profile, *, owner=None, operation='studio'):
+        connection.execute('''INSERT INTO browser_operation_leases(profile_id,owner_user_id,
+            operation_type,entity_id,lease_token,acquired_at,heartbeat_at,expires_at)
+            VALUES(?,?,?,?,?,'2000-01-01','2000-01-01','2000-01-01')''',
+            (profile, owner or self.owner, operation, ident, 'token-' + ident))
+
+    def test_fresh_snapshot_statement_budget_is_constant_at_zero_one_and_250_windows(self):
+        measurements = []
+        for count, added in ((0, 0), (1, 1), (250, 249)):
+            with self.subTest(windows=count):
+                self._seed(added)
+                snapshot, work = self._snapshot_work()
+                self.assertEqual(count, len(snapshot['plans']))
+                self.assertLessEqual(work['connections'], 3, work)
+                self.assertLessEqual(work['statements'], 12, work)
+                measurements.append((work['connections'], work['statements']))
+        self.assertEqual(1, len(set(measurements)), measurements)
+
+    def test_retained_legacy_jobs_add_no_per_profile_or_per_job_sql(self):
+        from app.posting_schema import initialize_posting_schema
+        with self.db.write() as connection:
+            initialize_posting_schema(connection)
+        measurements = []
+        for count, added in ((0, 0), (1, 1), (250, 249)):
+            with self.subTest(windows=count):
+                rows = self._seed(added)
+                with self.db.write() as connection:
+                    for _, profile in rows:
+                        self._legacy_studio(connection, 's-' + profile, profile,
+                                            kind='material', result_json='{"window_hold":true}')
+                        self._legacy_posting(connection, 'p-' + profile, profile, status='needs_review')
+                snapshot, work = self._snapshot_work()
+                self.assertEqual(count, len(snapshot['plans']))
+                self.assertEqual(count, len(snapshot['locks']))
+                self.assertTrue(all(row['operation_type'] == 'account' and row['entity_id'] is None
+                                    for row in snapshot['locks'].values()))
+                self.assertLessEqual(work['connections'], 3, work)
+                # The optional retained ledger adds one batch read. It must not
+                # change the original fresh-database 12-statement contract.
+                self.assertLessEqual(work['statements'], 13, work)
+                self.assertLess(work['instructions'], 100_000, work)
+                measurements.append((work['connections'], work['statements']))
+        self.assertEqual(1, len(set(measurements)), measurements)
+        # Many history rows on one profile must not create a per-job SQL loop.
+        profile = self._seed(1)[0][1]
+        with self.db.write() as connection:
+            for number in range(250):
+                self._legacy_studio(connection, 'idle-' + str(number), profile, status='completed')
+                self._legacy_posting(connection, 'idle-p-' + str(number), profile, status='completed')
+        snapshot, work = self._snapshot_work()
+        self.assertNotIn(profile, snapshot['locks'])
+        self.assertEqual(measurements[-1], (work['connections'], work['statements']))
+
+    def test_batch_holds_match_profile_fences_without_changing_ownership(self):
+        from app.posting_retirement import legacy_profile_hold, legacy_window_state
+        from app.posting_schema import initialize_posting_schema
+        profiles = []
+        with self.db.write() as connection:
+            initialize_posting_schema(connection)
+            for number, fields in enumerate((
+                    {}, {'status': 'running'}, {'status': 'needs_review'}, {'inflight': 1},
+                    {'cursor': 1}, {'result_json': '{broken'}, {'result_json': '[]'},
+                    {'result_json': 'null'}, {'result_json': '{"failure":null}'},
+                    {'result_json': '{"failure":{"uncertain":true}}'},
+                    {'result_json': '{"window_cleanup":{"state":"unknown"}}'},
+                    {'result_json': '{"published":true}'},
+                    {'status': 'completed', 'result_json': '{"window_hold":true}'},
+                    {'status': 'completed', 'result_json': '{"published":true}'})):
+                profile = 'studio-' + str(number)
+                profiles.append(profile)
+                self._legacy_studio(connection, profile, profile, **fields)
+            for number, fields in enumerate((
+                    {}, {'status': 'running'}, {'status': 'needs_review'},
+                    {'lease_token': 'missing-live-row'}, {'attempt_id': 'uncertain'},
+                    {'submitted_at': '2026-01-01'}, {'failure_stage': 'unknown'},
+                    {'status': 'completed', 'attempt_id': 'known-success'})):
+                profile = 'posting-' + str(number)
+                profiles.append(profile)
+                self._legacy_posting(connection, profile, profile, **fields)
+            for ident, profile, owner in (('leased-studio', 'original-studio', self.other),
+                                           ('leased-posting', 'original-posting', self.other)):
+                profiles.append(profile)
+                if ident == 'leased-studio':
+                    self._legacy_studio(connection, ident, profile, owner=owner)
+                else:
+                    self._legacy_posting(connection, ident, profile, owner=owner)
+                self._legacy_lease(connection, ident, 'mismatched-' + profile,
+                                   operation='studio' if ident == 'leased-studio' else 'posting')
+            self._legacy_studio(connection, 'precedence-studio', 'shared', owner=self.other, status='running')
+            self._legacy_posting(connection, 'precedence-posting', 'shared', status='running')
+            self._legacy_posting(connection, 'first-posting-running', 'post-shared', status='running')
+            self._legacy_posting(connection, 'second-posting-review', 'post-shared', owner=self.other,
+                                 status='needs_review')
+            profiles.extend(('shared', 'post-shared'))
+            connection.execute('''INSERT INTO posting_receipts(job_id,owner_user_id,profile_id,
+                username,confirmed_at,day_utc,evidence_json) VALUES(?,?,?,'fixture',
+                '2026-01-01','2026-01-01','{}')''', ('posting-0', self.owner, 'posting-0'))
+            self._legacy_studio(connection, 'nurture-cleanup', 'nurture-cleanup', kind='nurture',
+                                status='completed', result_json='{"window_hold":true}')
+            self._legacy_lease(connection, 'successor', 'shared', operation='account')
+        with self.db.read() as connection:
+            connection.execute('BEGIN')
+            leases = list(connection.execute('SELECT * FROM browser_operation_leases'))
+            expected = [row for profile in sorted(profiles)
+                        if (row := legacy_profile_hold(connection, profile)) is not None]
+            before = connection.total_changes
+            studio_ids, holds, cleanup = legacy_window_state(connection, leases=leases, include_nurture=True)
+            self.assertEqual({row['profile_id'] for row in expected}, {row['profile_id'] for row in holds})
+            expected_by_profile = {row['profile_id']: row for row in expected}
+            for hold in holds:
+                durable = {key: value for key, value in hold.items() if key != '_legacy_owner_ambiguous'}
+                if hold['profile_id'] in {'shared', 'post-shared'}:
+                    self.assertTrue(hold['_legacy_owner_ambiguous'])
+                else:
+                    self.assertFalse(hold['_legacy_owner_ambiguous'])
+                    self.assertEqual(expected_by_profile[hold['profile_id']], durable)
+            self.assertEqual(before, connection.total_changes, 'a snapshot must not mutate ownership')
+            self.assertEqual(['nurture-cleanup'], [row['id'] for row in cleanup])
+            self.assertIn('leased-studio', studio_ids)
+            self.assertNotIn('nurture-cleanup', studio_ids)
+            self.assertEqual(leases, list(connection.execute('SELECT * FROM browser_operation_leases')))
+        locks = self.accounts.snapshot(self.owner)['locks']
+        self.assertEqual('account', locks['shared']['operation_type'])
+        self.assertNotIn('can_reconcile_window_state', locks['shared'], 'actual successor stays authoritative')
+        self.assertNotIn('can_reconcile_window_state', locks['original-studio'])
+        self.assertNotIn('can_reconcile_window_state', locks['original-posting'])
+        self.assertTrue(locks['posting-0']['can_reconcile_window_state'])
+        self.assertTrue(locks['nurture-cleanup']['cleanup_required'])
+        self.assertEqual('cleanup_pending', locks['nurture-cleanup']['state'])
+        # Fresh reads see resolved durable evidence without a cache or deletion.
+        with self.db.write() as connection:
+            connection.execute("UPDATE studio_jobs SET result_json='{}' WHERE id='nurture-cleanup'")
+        self.assertNotIn('nurture-cleanup', self.accounts.snapshot(self.owner)['locks'])
+
+    def test_batch_legacy_reader_tolerates_missing_optional_tables_and_columns(self):
+        import sqlite3
+        from app.posting_retirement import legacy_profile_hold, legacy_window_state
+        connection = sqlite3.connect(':memory:')
+        self.addCleanup(connection.close)
+        connection.row_factory = sqlite3.Row
+        def durable_holds():
+            return [{key: value for key, value in row.items() if key != '_legacy_owner_ambiguous'}
+                    for row in legacy_window_state(connection)[1]]
+        self.assertEqual((set(), [], []), legacy_window_state(connection, include_nurture=True))
+        # A pre-migration posting ledger may lack failure_stage and later fields.
+        connection.execute('CREATE TABLE posting_jobs(id TEXT, owner_user_id TEXT, profile_id TEXT, status TEXT)')
+        connection.execute("INSERT INTO posting_jobs VALUES('old','owner','profile','running')")
+        self.assertEqual('old', legacy_window_state(connection)[1][0]['id'])
+        connection.execute("INSERT INTO posting_jobs VALUES('second','other-owner','profile','needs_review')")
+        self.assertEqual([legacy_profile_hold(connection, 'profile')], durable_holds())
+        connection.execute("DELETE FROM posting_jobs WHERE id='second'")
+        connection.execute("UPDATE posting_jobs SET status='completed'")
+        self.assertEqual([], legacy_window_state(connection)[1])
+        connection.execute('CREATE TABLE browser_operation_leases(operation_type TEXT, entity_id TEXT)')
+        connection.execute("INSERT INTO browser_operation_leases VALUES('posting','old')")
+        self.assertEqual('old', legacy_window_state(connection)[1][0]['id'])
+        connection.execute('DELETE FROM browser_operation_leases')
+        connection.execute("UPDATE posting_jobs SET status='queued'")
+        connection.execute('ALTER TABLE posting_jobs ADD COLUMN _legacy_has_receipt INTEGER DEFAULT 0')
+        connection.execute('CREATE TABLE posting_receipts(job_id TEXT PRIMARY KEY)')
+        connection.execute("INSERT INTO posting_receipts VALUES('old')")
+        expected = legacy_profile_hold(connection, 'profile')
+        self.assertIsNotNone(expected)
+        self.assertEqual([expected], durable_holds())
+        self.assertEqual(0, legacy_window_state(connection)[1][0]['_legacy_has_receipt'])
+        connection.execute('ALTER TABLE posting_jobs ADD COLUMN _legacy_owner_ambiguous INTEGER DEFAULT 0')
+        connection.execute("INSERT INTO posting_jobs(id,owner_user_id,profile_id,status) VALUES('other','other-owner','profile','running')")
+        self.assertTrue(legacy_window_state(connection)[1][0]['_legacy_owner_ambiguous'])
+        self.assertTrue(all(row[0] == 0 for row in connection.execute('SELECT _legacy_owner_ambiguous FROM posting_jobs')))
+
+    def test_ambiguous_retained_owners_never_gain_reconciliation_from_query_order(self):
+        from app.posting_schema import initialize_posting_schema
+        with self.db.write() as connection:
+            initialize_posting_schema(connection)
+            self._legacy_posting(connection, 'first-running', 'posting-shared', status='running')
+            self._legacy_posting(connection, 'second-review', 'posting-shared', owner=self.other,
+                                 status='needs_review')
+            self._legacy_studio(connection, 'studio-first', 'mixed-shared', status='running')
+            self._legacy_posting(connection, 'posting-second', 'mixed-shared', owner=self.other,
+                                 status='needs_review')
+            self._legacy_studio(connection, 'studio-own', 'studio-shared', status='running')
+            self._legacy_studio(connection, 'studio-other', 'studio-shared', owner=self.other,
+                                status='needs_review')
+            self._legacy_posting(connection, 'same-owner-first', 'unambiguous', status='running')
+            self._legacy_posting(connection, 'same-owner-second', 'unambiguous', status='needs_review')
+            before = {table: [dict(row) for row in connection.execute('SELECT * FROM ' + table)]
+                      for table in ('studio_jobs', 'posting_jobs', 'browser_operation_leases')}
+        for indexed in (True, False):
+            with self.db.write() as connection:
+                if not indexed:
+                    connection.execute('DROP INDEX posting_jobs_window')
+                else:
+                    connection.execute('CREATE INDEX IF NOT EXISTS posting_jobs_window ON posting_jobs(profile_id,status)')
+            for analyzed in (False, True):
+                with self.subTest(indexed=indexed, analyzed=analyzed):
+                    if analyzed:
+                        with self.db.write() as connection:
+                            connection.execute('ANALYZE')
+                    for owner in (self.owner, self.other):
+                        snapshot = self.accounts.snapshot(owner)
+                        states = {row['profile_id']: row for row in self.service.list_browser_lease_states(owner)}
+                        for profile in ('posting-shared', 'mixed-shared', 'studio-shared'):
+                            for row in (snapshot['locks'][profile], states[profile]):
+                                self.assertEqual('occupied', row['state'])
+                                self.assertEqual('account', row['operation_type'])
+                                self.assertIsNone(row['entity_id'])
+                                self.assertNotIn('can_reconcile_window_state', row)
+                                self.assertNotIn('_legacy_owner_ambiguous', row)
+                            self.assertFalse(states[profile]['owned_by_current_login'])
+                        for row in (snapshot['locks']['unambiguous'], states['unambiguous']):
+                            self.assertEqual(owner == self.owner, row.get('can_reconcile_window_state', False))
+        with self.db.read() as connection:
+            for table, rows in before.items():
+                self.assertEqual(rows, [dict(row) for row in connection.execute('SELECT * FROM ' + table)])
+
+    def test_malformed_completed_nurture_result_still_fails_closed(self):
+        import sqlite3
+        with self.db.write() as connection:
+            self._legacy_studio(connection, 'malformed-nurture', 'profile', kind='nurture',
+                                status='completed', result_json='{broken')
+        with self.assertRaises(sqlite3.OperationalError):
+            self.accounts.snapshot(self.owner)
+
     def test_plan_and_proxy_come_from_same_database_snapshot(self):
         plan, profile = self._seed(1)[0]
         original = self.db._connect

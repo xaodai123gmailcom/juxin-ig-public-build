@@ -122,15 +122,71 @@ def legacy_profile_hold(connection, profile_id):
     return None
 
 
+def legacy_window_state(connection, *, leases=None, include_nurture=False):
+    """Batch-read retained ownership evidence within the caller's transaction.
+
+    Old posting ledgers are optional and can lack later optional columns. Keep
+    SELECT * and the shared Python fence predicate rather than projecting newer
+    columns or interpreting uncertain JSON in SQL. Only receipt existence uses
+    an indexed per-job lookup; the number of SQL statements is row-independent.
+    """
+    tables = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+        "('studio_jobs','posting_jobs','posting_receipts','browser_operation_leases')")}
+    if leases is None:
+        leases = (connection.execute(
+            'SELECT operation_type,entity_id FROM browser_operation_leases').fetchall()
+            if 'browser_operation_leases' in tables else [])
+    # A lease for a job still fences its durable original profile even when its
+    # profile, login or token disagrees. Do not narrow this to matching owners.
+    leased_entities = {(row['operation_type'], row['entity_id']) for row in leases}
+    studio_entities, holds, cleanup = set(), {}, []
+    hold_owners = {}
+    def retain_hold(row):
+        profile = row['profile_id']
+        holds.setdefault(profile, row)
+        hold_owners.setdefault(profile, set()).add(row['owner_user_id'])
+    if 'studio_jobs' in tables:
+        condition = "kind IN ('posting','material')"
+        if include_nurture:
+            # CASE keeps malformed legacy posting JSON out of json_extract.
+            # Malformed completed nurture JSON still raises, preserving the
+            # existing fail-closed behavior rather than returning it as free.
+            condition = """CASE WHEN kind IN ('posting','material') THEN 1
+                WHEN kind='nurture' AND status='completed'
+                THEN json_extract(result_json,'$.window_hold')=1 ELSE 0 END"""
+        for record in connection.execute('SELECT * FROM studio_jobs WHERE ' + condition):
+            row = dict(record)
+            if row['kind'] == 'nurture':
+                cleanup.append(row)
+                continue
+            studio_entities.add(row['id'])
+            if row['profile_id'] and (('studio', row['id']) in leased_entities
+                    or legacy_job_requires_fence(row)):
+                retain_hold(row)
+    if 'posting_jobs' in tables:
+        receipt = ('EXISTS(SELECT 1 FROM posting_receipts r WHERE r.job_id=p.id)'
+                   if 'posting_receipts' in tables else '0')
+        for record in connection.execute(
+                'SELECT p.*, ' + receipt + ' AS _legacy_has_receipt FROM posting_jobs p'):
+            # Positional extraction cannot be shadowed by a historical column
+            # that happens to use the private computed alias. Preserve that
+            # original column too when returning the unchanged durable row.
+            has_receipt = record[-1]
+            row = {name: record[index] for index, name in enumerate(record.keys()[:-1])}
+            if row['profile_id'] and (('posting', row['id']) in leased_entities
+                    or legacy_job_requires_fence(row, standalone=True)
+                    or row['status'] != 'completed' and has_receipt):
+                retain_hold(row)
+    for profile, row in holds.items():
+        # A planner-dependent first row cannot grant reconciliation authority.
+        # This is derived display metadata on a copy, never durable ownership.
+        row['_legacy_owner_ambiguous'] = len(hold_owners[profile]) > 1
+    return studio_entities, [holds[profile] for profile in sorted(holds)], cleanup
+
+
 def legacy_window_holds(connection):
-    profiles = set()
-    for table, suffix in (('studio_jobs', " WHERE kind IN ('posting','material')"),
-                          ('posting_jobs', '')):
-        if _exists(connection, table):
-            profiles.update(row[0] for row in connection.execute(
-                f'SELECT DISTINCT profile_id FROM {table}' + suffix) if row[0])
-    return [row for profile in sorted(profiles)
-            if (row := legacy_profile_hold(connection, profile)) is not None]
+    return legacy_window_state(connection)[1]
 
 
 def legacy_studio_lease_entities(connection):

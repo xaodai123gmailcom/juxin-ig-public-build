@@ -375,24 +375,25 @@ class AccountWorkspace:
             events=[dict(r) for r in c.execute('SELECT name,action,created_at FROM account_window_events WHERE owner_user_id=? ORDER BY seq DESC LIMIT 100',(owner,))]
             dm={r['profile_id']:{'count':r['last_dm_count'],'checked_at':r['checked_at']} for r in c.execute('SELECT profile_id,last_dm_count,checked_at FROM follow_monitor_dm_accounts WHERE owner_user_id=?',(owner,))}
             following={r['profile_id']:{'username':r['username'],'count':r['following_count'],'checked_at':r['checked_at']} for r in c.execute('SELECT profile_id,username,following_count,checked_at FROM follow_monitor_accounts WHERE owner_user_id=?',(owner,))}
-            from .posting_retirement import legacy_studio_lease_entities, legacy_window_holds
-            retired_studio_ids=legacy_studio_lease_entities(c)
+            from .posting_retirement import legacy_window_state
+            lease_rows=list(c.execute('SELECT profile_id,operation_type,owner_user_id,entity_id FROM browser_operation_leases'))
+            retired_studio_ids,retired_holds,cleanup_rows=legacy_window_state(c,leases=lease_rows,include_nurture=True)
             leases={}
             actual_profiles=set()
-            for r in c.execute('SELECT profile_id,operation_type,owner_user_id,entity_id FROM browser_operation_leases'):
+            for r in lease_rows:
                 actual_profiles.add(r['profile_id'])
                 retired=(r['operation_type']=='posting' or r['operation_type']=='studio' and r['entity_id'] in retired_studio_ids)
                 leases[r['profile_id']]={'profile_id':r['profile_id'],'operation_type':'account' if retired else r['operation_type']}
                 if retired:
                     leases[r['profile_id']].update(state='occupied',entity_id=None)
                     if r['owner_user_id']==owner:leases[r['profile_id']]['can_reconcile_window_state']=True
-            for r in legacy_window_holds(c):
+            for r in retired_holds:
                 if r['profile_id'] in actual_profiles:continue
                 leases[r['profile_id']]={'profile_id':r['profile_id'],'operation_type':'account','state':'occupied','entity_id':None}
-                if r['owner_user_id']==owner:leases[r['profile_id']]['can_reconcile_window_state']=True
+                if r['owner_user_id']==owner and not r['_legacy_owner_ambiguous']:leases[r['profile_id']]['can_reconcile_window_state']=True
             # Durable cleanup receipts also block admission when their lease is
             # missing. Show the same occupancy the command path enforces.
-            for r in c.execute("SELECT profile_id FROM studio_jobs WHERE kind='nurture' AND status='completed' AND json_extract(result_json,'$.window_hold')=1"):
+            for r in cleanup_rows:
                 leases.setdefault(r['profile_id'], {'profile_id':r['profile_id'],'operation_type':'studio','state':'cleanup_pending'})
                 leases[r['profile_id']]['cleanup_required']=True
             opened_times={r['plan_id']:r['opened_at'] for r in c.execute("SELECT plan_id,max(created_at) AS opened_at FROM account_window_events WHERE owner_user_id=? AND (action LIKE '打开平台窗口%' OR action LIKE '导入 Cookie%') GROUP BY plan_id",(owner,))}
