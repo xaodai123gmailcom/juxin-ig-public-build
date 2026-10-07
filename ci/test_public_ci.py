@@ -253,7 +253,20 @@ class PublicContracts(unittest.TestCase):
             ci.early()
             self.assertEqual(calls[:6],expected)
             self.assertEqual(calls[6][0],'early-python-dependencies')
-            self.assertEqual(calls[7][0],'unicode-source-runtime')
+            self.assertEqual(calls[7],('early-service-startup-regressions',
+                [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
+                 'scripts/run_backend_tests.py','-p','test_frozen_service_r94.py',
+                 '--case-timeout','180','-v'],600))
+            self.assertEqual(calls[8][0],'unicode-source-runtime')
+            startup_calls=calls[:8]
+            calls.clear();failure=RuntimeError('mock real startup regression')
+            def fail_startup(*args):
+                calls.append(args)
+                if args[0]=='early-service-startup-regressions':raise failure
+            with patch.object(ci,'run_owned',side_effect=fail_startup),self.assertRaises(RuntimeError) as caught:
+                ci.early()
+            self.assertIs(caught.exception,failure)
+            self.assertEqual(calls,startup_calls)
             for failed in expected[1:]:
                 with self.subTest(failed=failed[0]):
                     calls.clear();failure=RuntimeError('mock owned descendant failure')

@@ -99,9 +99,12 @@ def seed(database, owner, *, isolated_directory):
         c.execute("INSERT INTO action_attempts VALUES('r61-attempt','r61-campaign','r61-action',1,'confirmed',?,?,'{}')", (NOW, NOW))
         c.execute("INSERT INTO action_success_ledger VALUES(?,'follow','r61.follow','r61.follow','r61-campaign','r61-action','r61-attempt',?)", (owner, NOW))
         c.execute("INSERT INTO follow_monitor_rounds(owner_user_id,batch_id,profile_id,owner_username,actual_count,first_read_count,added_count,repeat_count,unfollow_count,checked_at) VALUES(?,'r61-round','r61-window','fixture',20,20,7,0,0,?)", (owner, NOW))
-        # Window leases remain part of the index upgrade's independent oracle.
-        # Retired posting records are covered by the legacy archive fixture.
-        c.execute("INSERT INTO browser_operation_leases VALUES('r61-held-window',?,'collection','r61-task','r61-fixture-lease',?,?,?)", (owner, NOW, NOW, '2099-01-01T00:00:00+00:00'))
+        # An unknown historical Studio owner is deliberately fail-closed across
+        # recovery and reconciliation. An idle collection lease is legitimately
+        # recovered on startup and cannot represent a durable ownership fence.
+        # Keep the full lease row in the exact index-upgrade retention oracle;
+        # retired posting records have their separate legacy archive fixture.
+        c.execute("INSERT INTO browser_operation_leases VALUES('r61-held-window',?,'studio','r61-unknown-studio-owner','r61-fixture-lease',?,?,?)", (owner, NOW, NOW, '2099-01-01T00:00:00+00:00'))
         c.commit()
     return {'start': START, 'end': END, 'totals': dict(EXPECTED)}
 

@@ -1,12 +1,16 @@
 """Real prior-index ownership must survive an R6.1 startup without data edits."""
+import asyncio
 import importlib.util
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import Mock
 
+from app.config import Settings
 from app.database import Database
 from app.errors import ConflictError
+from app.main import create_app
 from app.posting_schema import initialize_posting_schema
 from app.service import CoreService
 from app.work_reports import work_report, _split_work_report_sql, _report_time
@@ -62,8 +66,57 @@ class ReportIndexUpgradeR61Tests(unittest.TestCase):
         self.assertIn('idx_split_history_report_period', plan)
         self.assertIn('idx_split_history_report_identity', plan)
 
-    def test_fresh_database_reports_all_five_positive_totals(self):
+    def test_fresh_database_reports_all_four_positive_totals(self):
         self.check_reports()
+
+    def test_full_lifecycle_preserves_unknown_owner_fence_for_both_index_layouts(self):
+        async def restart_twice(owner_table):
+            legacy = fixture.install_old_index(self.db.path, isolated_directory=self.temp.name,
+                                              owner_table=owner_table)
+            before = fixture.state(self.db.path)
+            for _ in range(2):
+                browser = Mock(spec=['native', 'list_all_windows', 'open_profile',
+                                     'close_profile', 'closed_profile_guard'])
+                browser.native = None
+                for method in ('list_all_windows', 'open_profile', 'close_profile', 'closed_profile_guard'):
+                    getattr(browser, method).side_effect = AssertionError('Unexpected browser operation')
+                app = create_app(Settings(
+                    startup_token='isolated-index-upgrade-fixture-token',
+                    database_path=self.db.path, data_dir=Path(self.temp.name)),
+                    database=Database(self.db.path), bitbrowser=browser)
+                async with app.router.lifespan_context(app):
+                    await asyncio.sleep(0)
+                    self.check_reports()
+                    self.assertTrue(fixture.verify(self.db.path, before, legacy)['window_leases_preserved'])
+                    for operation in ('collection', 'studio'):
+                        with self.assertRaises(ConflictError):
+                            app.state.service.acquire_browser_lease(self.owner, 'r61-held-window',
+                                operation_type=operation, entity_id='competing-fixture')
+                    with self.db.read() as c:
+                        self.assertIsNone(c.execute(
+                            "SELECT id FROM studio_jobs WHERE id='r61-unknown-studio-owner'").fetchone())
+                # Shutdown and scheduled recovery must not silently edit the fence.
+                self.assertTrue(fixture.verify(self.db.path, before, legacy)['window_leases_preserved'])
+                self.assertEqual([], browser.mock_calls)
+        for owner_table in ('split_candidate_history', 'split_completed_targets'):
+            with self.subTest(owner_table=owner_table):
+                asyncio.run(restart_twice(owner_table))
+
+    def test_fixture_verification_rejects_ownership_fence_token_edits_and_deletion(self):
+        legacy = fixture.install_old_index(self.db.path, isolated_directory=self.temp.name)
+        self.db.initialize()
+        before = fixture.state(self.db.path)
+        with self.db.write() as c:
+            c.execute("UPDATE browser_operation_leases SET lease_token='changed-fixture' WHERE profile_id='r61-held-window'")
+        with self.assertRaisesRegex(AssertionError, 'browser_operation_leases'):
+            fixture.verify(self.db.path, before, legacy)
+        with self.db.write() as c:
+            c.execute("UPDATE browser_operation_leases SET lease_token='r61-fixture-lease' WHERE profile_id='r61-held-window'")
+        fixture.verify(self.db.path, before, legacy)
+        with self.db.write() as c:
+            c.execute("DELETE FROM browser_operation_leases WHERE profile_id='r61-held-window'")
+        with self.assertRaisesRegex(AssertionError, 'browser_operation_leases'):
+            fixture.verify(self.db.path, before, legacy)
 
     def test_legacy_history_owned_index_upgrade_preserves_every_record_and_lock(self):
         self.check_upgrade('split_candidate_history')

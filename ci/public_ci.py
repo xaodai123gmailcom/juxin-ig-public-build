@@ -66,6 +66,11 @@ def early():
                   'NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup', '-v'], 60)
     run_owned('early-python-dependencies', [python, '-I', '-X', 'utf8', 'scripts/install_python_dependencies.py',
                '--project-root', str(ROOT)], 1800)
+    # Catch real source-process startup and upgrade regressions before the long
+    # native build; the full source, frozen and installed gates remain mandatory.
+    run_owned('early-service-startup-regressions', [python, '-I', '-X', 'utf8',
+              'scripts/run_backend_tests.py', '-p', 'test_frozen_service_r94.py',
+              '--case-timeout', '180', '-v'], 600)
     run_owned('unicode-source-runtime', [sys.executable, '-I', '-X', 'utf8',
               str(ROOT / 'ci/public_ci_unicode.py'), 'source'], 3600)
     run_owned('early-node-dependencies', ['npm.cmd', 'ci', '--include=dev', '--no-audit', '--no-fund'], 900)

@@ -7,6 +7,10 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+EXPECTED_POSTING_REMOVED = {'verified': True, 'http_status': 404, 'endpoints': [
+    {'path': '/api/posting/snapshot', 'method': 'GET'},
+    {'path': '/api/posting/command', 'method': 'POST'},
+    {'path': '/api/internal/integrations/pexels', 'method': 'POST'}]}
 
 
 class CoreReleaseStartupR94Tests(unittest.TestCase):
@@ -25,6 +29,7 @@ class CoreReleaseStartupR94Tests(unittest.TestCase):
             except Exception as error:
                 self.fail(f'{error}\n{log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""}')
             self.assertTrue(result['pure_instagram'])
+            self.assertEqual(EXPECTED_POSTING_REMOVED, result['posting_removed'])
             self.assertTrue(result['snapshot_scale']['verified'])
             report = result['work_report_summary']
             self.assertEqual(result['snapshot_scale']['work_report_summary'], report)
@@ -79,7 +84,8 @@ class CoreReleaseStartupR94Tests(unittest.TestCase):
             except Exception as error:
                 self.fail(f'{error}\n{log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""}')
             self.assertEqual({'verified': True, 'source_revision': 'stability-r94',
-                              'authentication': True, 'database': 'ok', 'orderly_shutdown': True}, result)
+                              'authentication': True, 'database': 'ok', 'orderly_shutdown': True,
+                              'posting_removed': EXPECTED_POSTING_REMOVED}, result)
 
 
 if __name__ == '__main__':
