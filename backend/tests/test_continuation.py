@@ -93,27 +93,34 @@ class ContinuationTests(unittest.TestCase):
             self.assertEqual(cand['id'],c.execute('SELECT id FROM workbench_candidates').fetchone()[0])
             self.assertEqual(1,c.execute('SELECT total_count FROM global_seen_stats').fetchone()[0])
 
-    def add_post(self, name, when, *, owner=None, published=1, status='completed', ident=None):
+    def add_activity(self, name, when, *, owner=None, kind='nurture', status='completed', ident=None):
         ident = ident or str(uuid.uuid4())
         with self.db.write() as c:
             c.execute('''INSERT INTO studio_jobs(id,owner_user_id,request_key,kind,profile_id,status,config_json,result_json,due_at,created_at,updated_at)
-              VALUES(?,?,?,'posting','same-window',?,'{}',?,?,?,?)''', (ident,owner or self.owner,ident,status,json.dumps({'published':published,'confirmed_at':when,'executor':{'username':name,'window_name':'执行窗口','instagram_user_id':name+'-id'}}),when,when,when))
+              VALUES(?,?,?,?,'same-window',?,'{}',?,?,?,?)''', (ident,owner or self.owner,ident,kind,status,json.dumps({**({'published':1} if kind=='posting' else {}),'confirmed_at':when,'executor':{'username':name,'window_name':'执行窗口','instagram_user_id':name+'-id'}}),when,when,when))
+
+    def assert_no_posting_report(self, report):
+        for metric in ('posting','confirmed_posting'):
+            self.assertNotIn(metric,report['totals'])
+            for row in report['rows']:
+                self.assertNotIn(metric,row)
 
     def test_report_counts_full_history_local_midnight_and_changed_accounts(self):
         # UTC+7 local September 13: start inclusive, following midnight exclusive.
-        self.add_post('old.actor','2026-09-12T16:59:59+00:00')
-        self.add_post('new.actor','2026-09-12T17:00:00+00:00')
-        self.add_post('third.actor','2026-09-13T16:59:59+00:00')
-        self.add_post('next.day','2026-09-13T17:00:00+00:00')
-        self.add_post('failed.actor','2026-09-12T18:00:00+00:00',published=0,status='failed')
-        self.add_post('foreign','2026-09-12T18:00:00+00:00',owner=self.other)
+        self.add_activity('old.actor','2026-09-12T16:59:59+00:00')
+        self.add_activity('new.actor','2026-09-12T17:00:00+00:00')
+        self.add_activity('third.actor','2026-09-13T16:59:59+00:00')
+        self.add_activity('next.day','2026-09-13T17:00:00+00:00')
+        self.add_activity('failed.actor','2026-09-12T18:00:00+00:00',status='failed')
+        self.add_activity('foreign','2026-09-12T18:00:00+00:00',owner=self.other)
         with self.db.write() as c:
             for i in range(2001):
                 ident=f'history-{i}'
                 c.execute('''INSERT INTO studio_jobs(id,owner_user_id,request_key,kind,profile_id,status,config_json,result_json,due_at,created_at,updated_at)
-                  VALUES(?,?,?,'posting','legacy-window','completed','{}','{"published":1}','2026-09-12T18:00:00+00:00','2026-09-12T18:00:00+00:00','2026-09-12T18:00:00+00:00')''',(ident,self.owner,ident))
+                  VALUES(?,?,?,'nurture','legacy-window','completed','{}','{}','2026-09-12T18:00:00+00:00','2026-09-12T18:00:00+00:00','2026-09-12T18:00:00+00:00')''',(ident,self.owner,ident))
         r=work_report(self.db,self.owner,'2026-09-13T00:00:00+07:00','2026-09-14T00:00:00+07:00')
-        self.assertEqual(2003,r['totals']['posting'])
+        self.assertEqual(2003,r['totals']['nurture'])
+        self.assert_no_posting_report(r)
         self.assertEqual({'new.actor','third.actor',''}, {row['username'] for row in r['rows']})
         self.assertEqual(2001,r['unattributed'])
 
@@ -131,11 +138,12 @@ class ContinuationTests(unittest.TestCase):
             c.executemany("""INSERT INTO follow_monitor_rounds(owner_user_id,batch_id,profile_id,owner_username,
               actual_count,first_read_count,added_count,repeat_count,unfollow_count,checked_at)
               VALUES(?,?,?,?,100,100,?,?,0,?)""",entries)
-        self.add_post('posting.actor','2026-09-13T08:00:00+00:00')
+        self.add_activity('posting.actor','2026-09-13T08:00:00+00:00',kind='posting')
         start,end='2026-09-13T00:00:00+07:00','2026-09-14T00:00:00+07:00'
         report=work_report(self.db,self.owner,start,end)
         self.assertEqual(9,report['totals']['added'])  # repeats are already inside added_count
-        self.assertEqual(1,report['totals']['posting'])
+        self.assert_no_posting_report(report)
+        self.assertNotIn('posting.actor',{row['username'] for row in report['rows']})
         self.assertEqual({'actor.one':5,'actor.two':4},{r['username']:r['added'] for r in report['rows'] if r['added']})
         self.assertEqual(9,sum(r['added'] for r in report['rows']))
         self.assertEqual(report,work_report(self.db,self.owner,start,end),'refresh is read-only')
@@ -186,14 +194,15 @@ class ContinuationTests(unittest.TestCase):
         from app.config import Settings
         app=create_app(Settings('fixture-startup-token-for-tests-only',self.root/'test.db',self.root),database=self.db,bitbrowser=self.hub)
         client=TestClient(app)
-        self.add_post('own.actor','2026-09-12T18:00:00+00:00')
-        self.add_post('foreign.actor','2026-09-12T18:00:00+00:00',owner=self.other)
+        self.add_activity('own.actor','2026-09-12T18:00:00+00:00')
+        self.add_activity('foreign.actor','2026-09-12T18:00:00+00:00',owner=self.other)
         body={'kind':'activity','owner_user_id':self.other,'start':'2026-09-12T00:00:00Z','end':'2026-09-13T00:00:00Z'}
         headers={'X-Startup-Token':'fixture-startup-token-for-tests-only'}
         self.assertEqual(401,client.post('/api/reports/query',json=body,headers=headers).status_code)
         headers['Authorization']='Bearer '+self.service.login('report-owner','correct horse battery staple')['token']
         response=client.post('/api/reports/query',json=body,headers=headers)
-        self.assertEqual(200,response.status_code);self.assertEqual(1,response.json()['totals']['posting'])
+        self.assertEqual(200,response.status_code);self.assertEqual(1,response.json()['totals']['nurture'])
+        self.assert_no_posting_report(response.json())
         self.assertEqual('own.actor',response.json()['rows'][0]['username'])
         self.assertGreaterEqual(client.post('/api/reports/query',json={**body,'kind':'invalid'},headers=headers).status_code,400)
         client.close()

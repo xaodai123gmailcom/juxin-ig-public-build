@@ -74,6 +74,11 @@ def early():
     run_owned('unicode-source-runtime', [sys.executable, '-I', '-X', 'utf8',
               str(ROOT / 'ci/public_ci_unicode.py'), 'source'], 3600)
     run_owned('early-node-dependencies', ['npm.cmd', 'ci', '--include=dev', '--no-audit', '--no-fund'], 900)
+    run_owned('early-retained-navigation-contract', ['node', '--test',
+              'desktop/tests/navigation-contract-r65.test.cjs'], 180)
+    run_owned('early-retained-report-regressions', [python, '-I', '-X', 'utf8',
+              'scripts/run_backend_tests.py', '-p', 'test_continuation.py',
+              '--case-timeout', '180', '-v'], 600)
     for target in ('build:ui', 'build:electron'):
         run_owned('early-' + target.replace(':', '-'), ['npm.cmd', 'run', target], 600)
     for pattern in ('test_python_environment.py', 'test_timezone_data_r57.py'):

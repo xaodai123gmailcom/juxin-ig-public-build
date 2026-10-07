@@ -12,6 +12,7 @@ const { createIntegrationWatchdog } = require('./integration-watchdog.cjs');
 const {rendererFixtureRead,waitRendererFixture}=require('./renderer-fixture.cjs');
 const {prepareVisibleFixture,captureShellFailure}=require('./visible-fixture.cjs');
 const { integrationFailureDetails, integrationFailureSummary, writeIntegrationFailure, pythonProbeFailure } = require('./integration-failure.cjs');
+const {assertRetainedNavigation}=require('./navigation-contract-r65.cjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(),'juxin-embedded-test-'));
 app.setPath('userData',temp);
 // Match the packaged application, including its localized product name.
@@ -541,8 +542,8 @@ app.whenReady().then(async()=>{
   console.log('PASS storage settings clear-all and automatic switch; header Google Translate toggles and Escape hides');
   await shellEval("[...document.querySelectorAll('button')].find(b=>b.textContent==='ChatGPT').click()");await waitShell('fixture.chatgpt===true');
   await shellEval("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");await waitShell('fixture.chatgpt===false');
-  const navColors=await shellEval("[...document.querySelectorAll('.formal-nav a[data-nav]')].map(a=>({text:getComputedStyle(a).color,icon:getComputedStyle(a.querySelector('svg')).color}))");
-  assert.equal(new Set(navColors.map(c=>c.text)).size,12);assert.ok(navColors.every(c=>c.text===c.icon));
+  const navColors=await shellEval("[...document.querySelectorAll('.formal-nav a[data-nav]')].map(a=>({id:a.dataset.nav,href:a.getAttribute('href'),label:a.querySelector('span')?.textContent.trim(),iconCount:a.querySelectorAll('svg').length,anchor:getComputedStyle(a).color,text:a.querySelector('span')?getComputedStyle(a.querySelector('span')).color:null,icon:a.querySelector('svg')?getComputedStyle(a.querySelector('svg')).color:null}))");
+  assertRetainedNavigation(navColors);
   console.log('PASS ChatGPT header toggle/Escape and distinct navigation text/icon accents');
 
   await shellEval("document.querySelector('a[href=\"#/accounts\"]').click()");await waitShell("Boolean(document.querySelector('[data-plan-id=plan]'))");

@@ -281,6 +281,38 @@ class PublicContracts(unittest.TestCase):
         self.assertIn('python scripts/tests/test_owned_process_r64.py && '
                       'python scripts/tests/test_owned_process_windows_r64.py && ',package['scripts']['test:source'])
 
+    def test_retained_navigation_contract_is_additive_early_and_fail_closed(self):
+        root=Path('/synthetic');calls=[]
+        expected=('early-retained-navigation-contract',
+                  ['node','--test','desktop/tests/navigation-contract-r65.test.cjs'],180)
+        with patch.object(ci,'ROOT',root),patch.object(ci,'sys',SimpleNamespace(executable='base-python')),\
+             patch.object(ci,'powershell',side_effect=lambda script:['powershell',script]),\
+             patch.object(ci,'state_root',return_value=root/'state'),patch.object(ci,'digest',return_value='a'*64),\
+             patch.object(ci,'run_owned',side_effect=lambda *args:calls.append(args)):
+            ci.early()
+            self.assertEqual([call for call in calls if call[0]==expected[0]],[expected])
+            labels=[call[0] for call in calls]
+            self.assertEqual(labels.index(expected[0]),labels.index('early-node-dependencies')+1)
+            self.assertLess(labels.index(expected[0]),labels.index('early-build-ui'))
+            report=('early-retained-report-regressions',
+                    [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
+                     'scripts/run_backend_tests.py','-p','test_continuation.py',
+                     '--case-timeout','180','-v'],600)
+            self.assertEqual([call for call in calls if call[0]==report[0]],[report])
+            self.assertEqual(labels.index(report[0]),labels.index(expected[0])+1)
+            self.assertLess(labels.index(report[0]),labels.index('early-build-ui'))
+            self.assertIn('early-all-required-regressions',labels)
+            all_calls=list(calls)
+            for failed in (expected,report):
+                calls.clear();failure=RuntimeError('mock retained product mismatch')
+                def fail(*args):
+                    calls.append(args)
+                    if args[0]==failed[0]:raise failure
+                with patch.object(ci,'run_owned',side_effect=fail),self.assertRaises(RuntimeError) as caught:
+                    ci.early()
+                self.assertIs(caught.exception,failure)
+                self.assertEqual(calls,all_calls[:all_calls.index(failed)+1])
+
     def test_installed_checks_preserve_scale_upgrade_and_actual_api(self):
         text=(HERE/'public_ci_verify_installed.ps1').read_text()
         for token in ('--pure-ig','--snapshot-scale','--collection-completion','--standalone-nurture',
