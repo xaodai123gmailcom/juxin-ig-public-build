@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import re
+import select
 import socket
 import subprocess
 import sys
@@ -142,17 +143,83 @@ class ShutdownContracts(unittest.TestCase):
                 self.assertIsNone(owned.raw_socket)
 
     def test_watchdog_interrupts_real_blocked_raw_send_and_timeout_still_fails(self):
-        v = self.verifier; owned = v.OwnedRecoveryTools()
-        sender, unread = socket.socketpair()
-        self.addCleanup(sender.close); self.addCleanup(unread.close)
-        sender.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-        owned.raw_socket = sender
-        started = time.monotonic()
-        with self.assertRaises(v.InstalledRecoveryShutdownTimeout):
-            with v.installed_phase(Mock(), started + 3, .15, v.InstalledRecoveryShutdownTimeout, cleanup=owned.abort):
-                sender.sendall(b'x' * 8_000_000)
-        self.assertLess(time.monotonic() - started, 2)
-        self.assertTrue(owned.interrupted)
+        # socketpair is AF_UNIX on Unix and loopback TCP on Windows. Neither a
+        # send-buffer hint nor a fixed payload proves backpressure on both.
+        for send_buffer, receive_buffer in ((4096, 4096), (262144, 65536)):
+            with self.subTest(send_buffer=send_buffer, receive_buffer=receive_buffer):
+                v = self.verifier; owned = v.OwnedRecoveryTools()
+                sender, unread = socket.socketpair()
+                worker = None; done = threading.Event(); progress_lock = threading.Lock()
+                progress = [0, 0]; errors = []; observed_at_abort = []
+                chunk = b'x' * 65536
+                def counters():
+                    with progress_lock: return tuple(progress)
+                def send_until_interrupted():
+                    try:
+                        while True:
+                            with progress_lock: progress[0] += 1
+                            sender.sendall(chunk)
+                            with progress_lock: progress[1] += 1
+                    except BaseException as error:
+                        errors.append(error)
+                    finally:
+                        done.set()
+                def pending_send(wait):
+                    before = counters()
+                    writable = select.select([], [sender], [], wait)[1]
+                    after = counters()
+                    return (before == after and after[0] > after[1] and
+                            not writable and not done.is_set())
+                def abort_pending_send():
+                    # Observe the actual socket immediately before interruption;
+                    # an entered event alone could just be a delayed worker.
+                    try: observed_at_abort.append(pending_send(0))
+                    finally: owned.abort()
+                try:
+                    sender.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, send_buffer)
+                    unread.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+                    owned.raw_socket = sender
+                    setup_deadline = time.monotonic() + 3
+                    sender.setblocking(False)
+                    while True:
+                        self.assertLess(time.monotonic(), setup_deadline, 'socket never reached backpressure')
+                        try:
+                            self.assertGreater(sender.send(chunk), 0)
+                        except BlockingIOError:
+                            break
+                    sender.setblocking(True)
+                    worker = threading.Thread(target=send_until_interrupted, daemon=True)
+                    worker.start()
+                    # Require no writable capacity and the same uncompleted
+                    # real send across an observation interval. If a TCP ACK
+                    # frees capacity, the worker keeps filling; no byte-count
+                    # or receive-window assumption is needed.
+                    while not pending_send(.02):
+                        self.assertFalse(done.is_set(), 'sender failed before the watchdog')
+                        self.assertLess(time.monotonic(), setup_deadline, 'no pending send was established')
+                    self.assertEqual(errors, [])
+                    started = time.monotonic()
+                    with self.assertRaises(v.InstalledRecoveryShutdownTimeout):
+                        with v.installed_phase(Mock(), started + 3, .15,
+                                v.InstalledRecoveryShutdownTimeout, cleanup=abort_pending_send):
+                            self.assertTrue(done.wait(1), 'socket interruption did not release the sender')
+                    worker.join(1)
+                    self.assertFalse(worker.is_alive(), 'interrupted sender did not drain')
+                    self.assertTrue(done.is_set())
+                    self.assertEqual(observed_at_abort, [True])
+                    self.assertEqual(len(errors), 1)
+                    self.assertIsInstance(errors[0], OSError)
+                    self.assertLess(time.monotonic() - started, 2)
+                    self.assertTrue(owned.interrupted)
+                finally:
+                    # Even an assertion failure must not strand the real I/O
+                    # worker. Closing its unread peer is cleanup, never proof.
+                    try: owned.abort()
+                    finally:
+                        unread.close(); sender.close()
+                        if worker is not None:
+                            worker.join(1)
+                            self.assertFalse(worker.is_alive(), 'socket fixture cleanup did not drain')
 
     def test_windows_abort_uses_only_retained_handle_and_release_is_idempotent(self):
         owned = self.verifier.OwnedRecoveryTools()
