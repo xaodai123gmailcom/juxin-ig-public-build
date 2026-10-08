@@ -10,6 +10,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from public_ci_runtime import collect_inventory, inventory_digest
+from public_ci_installed_supervision import prepare as prepare_installed_observation, collect as installed_supervision
 from public_ci_common import (ROOT, STAGES, PUBLIC_FILES, EARLY_FILES, actual_run, bind_native,
     check_telemetry_consent, digest, establish_telemetry_consent, read_json,
     regular, require, run_owned, source_identity, state_root, validate_source_build,
@@ -47,7 +48,8 @@ def contracts():
               str(ROOT / 'scripts/tests/test_installed_recovery_profile_environment_r64.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
                  'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
-                 'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py'):
+                 'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py',
+                 'test_public_ci_installed_supervision.py'):
         run_owned('contract-' + name.replace('_', '-').replace('.', '-'),
                   [sys.executable, '-I', '-X', 'utf8', str(ROOT / 'ci' / name), '-v'], 180)
     run_owned('unicode-resource-copy', ['node', '--test', 'scripts/tests/portable_resources_r94.test.mjs'], 180)
@@ -120,8 +122,9 @@ def installed():
     state = verify_run_state()
     require(read_json(state_root() / 'build-result.json')['status'] == 'passed', 'Full build did not pass')
     validate_source_build(state)
+    diagnostic_arguments = prepare_installed_observation(state, state_root())
     try:
-        run_owned('actual-installed-product-acceptance', powershell('ci/public_ci_verify_installed.ps1'), 3600)
+        run_owned('actual-installed-product-acceptance', powershell('ci/public_ci_verify_installed.ps1') + diagnostic_arguments, 3600)
     except Exception:
         # The nested verifier catches its error before PowerShell reports the
         # nonzero child. Read only its exact runner-local combined stream, then
@@ -160,7 +163,10 @@ def installed_hashes(runtime_inventory=None):
 def run_stage(name, action):
     state = verify_run_state()
     require(name in STAGES, 'Unknown stage')
-    write_json(state_root() / (name + '-start.json'), {'started_ns': time.time_ns(), 'nonce': state['nonce']})
+    start = {'started_ns': time.time_ns(), 'nonce': state['nonce']}
+    if name == 'installed':
+        start['supervision_invocation'] = uuid.uuid4().hex
+    write_json(state_root() / (name + '-start.json'), start)
     result = {'stage': name, 'status': 'failed', 'nonce': state['nonce'], 'hashes': {}}
     try:
         hashes = action()
@@ -213,7 +219,10 @@ def export():
         'raw_logs_exported': False, 'profile_or_source_exported': False}
     destination = state_root() / 'public'
     destination.mkdir(exist_ok=False)
+    installed_diagnostics = ({'installed_supervision': installed_supervision(state, state_root(), ROOT)}
+        if statuses['installed'] in ('failed', 'interrupted') else {})
     write_json(destination / 'run-summary.json', dict(common, stages=statuses, failure_diagnostics=failure_diagnostics(),
+        **installed_diagnostics,
         all_required_stages_passed=all(value == 'passed' for value in statuses.values())))
     write_json(destination / 'source-build-proof.json', dict(common, stage='source-build',
         status=statuses['build'], hashes=source_hashes,

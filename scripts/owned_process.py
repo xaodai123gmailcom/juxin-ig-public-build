@@ -83,6 +83,10 @@ class SupervisionError(RuntimeError):
     pass
 
 
+DIAGNOSTIC_LAUNCH_STAGES = frozenset({'not-started', 'job-setup', 'log-open', 'target-setup',
+    'target-create', 'target-membership', 'target-resume', 'launched'})
+
+
 def windows_api():
     if os.name != 'nt':
         raise SupervisionError('Owned native launcher requires Windows; no compatibility fallback is permitted')
@@ -211,6 +215,7 @@ class WindowsContainment:
         self.pid = None
         self.launch_executable = None
         self.closed = False
+        self.diagnostic_launch_stage = 'not-started'
 
     def check(self, success, operation):
         if not success:
@@ -231,14 +236,17 @@ class WindowsContainment:
         attributes = None
         initialized = False
         membership_verified = False
+        self.diagnostic_launch_stage = 'job-setup'
         self.job = self.api.CreateJobObjectW(None, None)  # private, unnamed, non-inheritable
         self.check(self.job, 'Create private job')
         try:
             limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
             limits.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE, no breakaway flags
             self.check(self.api.SetInformationJobObject(self.job, 9, ctypes.byref(limits), ctypes.sizeof(limits)), 'Set job kill-on-close')
+            self.diagnostic_launch_stage = 'log-open'
             self.stdout = self.open_log(request.stdoutPath)
             self.stderr = self.stdout if ntpath.normcase(request.stdoutPath) == ntpath.normcase(request.stderrPath) else self.open_log(request.stderrPath)
+            self.diagnostic_launch_stage = 'target-setup'
             security = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, 1)
             self.stdin = self.api.CreateFileW('NUL', 0x80000000, 1 | 2, ctypes.byref(security), 3, 0x80, None)
             if self.stdin == ctypes.c_void_p(-1).value:
@@ -272,15 +280,19 @@ class WindowsContainment:
             self.launch_executable, text = command_line(command[0], command[1:])
             environment = ctypes.create_unicode_buffer('\0'.join(key + '=' + value for key, value in sorted(target_environment.items(), key=lambda item: item[0].upper())) + '\0')
             information = PROCESS_INFORMATION()
+            self.diagnostic_launch_stage = 'target-create'
             self.check(self.api.CreateProcessW(self.launch_executable, ctypes.create_unicode_buffer(text), None, None, True,
                        0x4 | 0x400 | 0x80000 | 0x08000000, environment, request.workingDirectory,
                        ctypes.byref(startup), ctypes.byref(information)), 'Create suspended target inside private job')
             self.process, self.thread, self.pid = information.hProcess, information.hThread, information.dwProcessId
             member = BOOL()
+            self.diagnostic_launch_stage = 'target-membership'
             self.check(self.api.IsProcessInJob(self.process, self.job, ctypes.byref(member)), 'Verify private-job membership')
             self.check(member.value, 'Target private-job membership; resume refused')
             membership_verified = True
+            self.diagnostic_launch_stage = 'target-resume'
             self.check(self.api.ResumeThread(self.thread) != 0xFFFFFFFF, 'Resume owned target')
+            self.diagnostic_launch_stage = 'launched'
         except BaseException as error:
             # A membership-check failure must never leave an uncontained
             # suspended target alive. This exact held handle is ours.
@@ -412,6 +424,15 @@ def supervise(request, *, containment=None, cancelled=None, clock=time.monotonic
         except BaseException as error:
             receipt['errors'].append('Handle cleanup: ' + str(error))
         receipt['elapsedSeconds'] = round(clock() - started, 6)
+        # Observation only: legacy/test containments need not implement it, and
+        # neither receipt validation nor terminal acceptance depends on it.
+        receipt['diagnosticLaunchStage'] = 'unknown'
+        try:
+            stage = getattr(native, 'diagnostic_launch_stage', 'unknown')
+            if type(stage) is str and stage in DIAGNOSTIC_LAUNCH_STAGES:
+                receipt['diagnosticLaunchStage'] = stage
+        except BaseException:
+            pass  # Diagnostic observation must not replace the owned outcome.
     return receipt
 
 

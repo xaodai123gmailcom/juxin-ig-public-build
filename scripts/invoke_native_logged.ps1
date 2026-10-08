@@ -8,7 +8,8 @@ function Invoke-IgacNativeCommandWithLog {
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$LogPath,
         # Previously unbounded. This explicit orchestration cap does not replace
         # or extend any narrower test, stage, embedded-suite or build deadline.
-        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 14400
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds = 14400,
+        [scriptblock]$DiagnosticObserver = $null
     )
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) { throw "Native command was not found: $FilePath" }
     $FullLogPath = [IO.Path]::GetFullPath($LogPath)
@@ -22,7 +23,7 @@ function Invoke-IgacNativeCommandWithLog {
     if ([IO.Path]::GetFileName($FilePath).Equals("python.exe", [StringComparison]::OrdinalIgnoreCase)) {
         $SupervisorPython = (Resolve-Path -LiteralPath $FilePath).Path
     }
-    $Receipt = Invoke-IgacOwnedProcess -SupervisorPython $SupervisorPython -StreamOutput -Request @{
+    $Receipt = Invoke-IgacOwnedProcess -SupervisorPython $SupervisorPython -StreamOutput -DiagnosticObserver $DiagnosticObserver -Request @{
         executable = (Resolve-Path -LiteralPath $FilePath).Path
         arguments = @($ArgumentList)
         workingDirectory = (Get-Location).ProviderPath

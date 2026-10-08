@@ -46,6 +46,8 @@ def functions(*names, **dependencies):
                      sys=SimpleNamespace(platform='win32'), **dependencies)
     nodes = [node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(nodes) == len(names)
+    if 'diagnostic_phase' not in names:
+        nodes += [node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == 'diagnostic_phase']
     declarations = [node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name.startswith('InstalledRecovery')
         or isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id.startswith('INSTALLED_') for target in node.targets)]
     exec(compile(ast.Module(body=declarations + nodes, type_ignores=[]), str(SOURCE), 'exec'), namespace)
@@ -72,7 +74,8 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
             self.assertIn('Traceback (most recent call last):', errors.getvalue())
             self.assertIn(str(SOURCE), errors.getvalue())
             self.assertIn('RuntimeError: runner-only-private-exception', errors.getvalue())
-            self.assertEqual(output.getvalue(), 'INSTALLED_RECOVERY_R64=FAIL runner-only-private-exception\n')
+            self.assertEqual(output.getvalue(), 'INSTALLED_RECOVERY_PHASE=started\n'
+                'INSTALLED_RECOVERY_R64=FAIL runner-only-private-exception\n')
             self.assertNotIn('INSTALLED_RECOVERY_R64=PASS', output.getvalue())
             probe.assert_called_once_with(args.executable, args.core_executable, args.core_report,
                 args.log, timeout=120)
@@ -104,8 +107,34 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
             with patch('sys.stdout', output):
                 self.assertEqual(main(), 0)
             self.assertEqual(json.loads(args.report.read_text()), proof)
-            self.assertTrue(output.getvalue().startswith('INSTALLED_RECOVERY_R64=PASS '))
+            self.assertEqual(output.getvalue().splitlines()[:2],
+                ['INSTALLED_RECOVERY_PHASE=started', 'INSTALLED_RECOVERY_PHASE=complete'])
+            self.assertTrue(output.getvalue().splitlines()[2].startswith('INSTALLED_RECOVERY_R64=PASS '))
             trace.print_exc.assert_not_called()
+
+    def test_phase_markers_are_fixed_best_effort_observations(self):
+        diagnostic = functions('diagnostic_phase').diagnostic_phase
+        expected = {'started', 'source-binding', 'import-setup', 'seed', 'launch', 'debugger',
+                    'renderer', 'preload', 'readiness', 'api', 'shutdown', 'validation', 'complete'}
+        self.assertEqual(diagnostic.__globals__['INSTALLED_DIAGNOSTIC_PHASES'], expected)
+        output = io.StringIO()
+        with patch('sys.stdout', output):
+            for phase in sorted(expected): diagnostic(phase)
+            for value in ('private detail', 'api\nprivate detail', '', None, 3, [], object()):
+                diagnostic(value)
+        self.assertEqual(output.getvalue().splitlines(),
+            ['INSTALLED_RECOVERY_PHASE=' + phase for phase in sorted(expected)])
+        for failure in (OSError('stream closed'), KeyboardInterrupt(), SystemExit(99)):
+            diagnostic.__globals__['print'] = Mock(side_effect=failure)
+            self.assertIsNone(diagnostic('api'))
+
+    def test_started_marker_never_changes_cli_parse_failure(self):
+        parser = Mock(); parser.parse_args.side_effect = SystemExit(2)
+        main = functions('main', argparse=SimpleNamespace(ArgumentParser=lambda **kwargs: parser)).main
+        with patch('sys.stdout', io.StringIO()) as output, self.assertRaises(SystemExit) as error:
+            main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(output.getvalue(), 'INSTALLED_RECOVERY_PHASE=started\n')
 
     def test_profile_values_survive_while_inherited_auth_and_runtime_controls_do_not(self):
         with patch.dict(os.environ, {**PROFILE, **POISON}, clear=True):
@@ -119,7 +148,7 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
         self.assertEqual(env['PYTHONIOENCODING'], 'utf-8')
 
     def run_launch(self, profile, *, session_ready=True, exercise_error=None, fire_watchdogs=False,
-                   late_teardown=False, cleanup_error=None, shutdown_hang=False):
+                   late_teardown=False, cleanup_error=None, shutdown_hang=False, diagnostic_error=None):
         """Run the whole actual launch function, with every runtime edge fake."""
         with tempfile.TemporaryDirectory(prefix='r64-profile-contract-') as temporary:
             base = Path(temporary)
@@ -199,8 +228,12 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
                 dispatch_browser_events=dispatch,
                 installed_core_process=observed_core, exercise=exercise,
                 stop_owned_runtime=cleanup, validate_proof=validate)
+            if diagnostic_error:
+                probe.probe_installed.__globals__['print'] = Mock(side_effect=diagnostic_error)
+            output = io.StringIO()
             with patch.dict(os.environ, {**profile, **POISON}, clear=True), \
-                    patch.dict(sys.modules, {'playwright': SimpleNamespace(), 'playwright.sync_api': fake_playwright}):
+                    patch.dict(sys.modules, {'playwright': SimpleNamespace(), 'playwright.sync_api': fake_playwright}), \
+                    patch('sys.stdout', output):
                 if exercise_error or not session_ready or fire_watchdogs or late_teardown or shutdown_hang:
                     expected = ('process deadline expired' if fire_watchdogs or late_teardown else
                         'did not shut down before deadline' if shutdown_hang else
@@ -224,6 +257,15 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
                     process.wait.assert_called_once()
                     self.assertIn(str(runtime['pid']), native.run.call_args.args[0][-1])
                     cleanup.assert_not_called()
+            phases = ['source-binding', 'import-setup', 'seed', 'launch', 'debugger', 'renderer', 'preload', 'readiness']
+            if session_ready:
+                phases.append('api')
+                if not exercise_error and not fire_watchdogs:
+                    phases.append('shutdown')
+                    if not late_teardown and not shutdown_hang:
+                        phases.append('validation')
+            self.assertEqual(output.getvalue().splitlines(), [] if diagnostic_error else
+                ['INSTALLED_RECOVERY_PHASE=' + phase for phase in phases])
             self.assertEqual(len(timers), 5 if not session_ready else 6 if exercise_error or fire_watchdogs else 7)
             for watchdog in timers:
                 watchdog.start.assert_called_once(); watchdog.cancel.assert_called_once()
@@ -243,6 +285,11 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
 
     def test_actual_launch_does_not_invent_missing_profile_values(self):
         self.run_launch({})
+
+    def test_unavailable_phase_output_preserves_success_and_original_failure(self):
+        self.run_launch(PROFILE, diagnostic_error=OSError('diagnostic unavailable'))
+        self.run_launch(PROFILE, exercise_error=RuntimeError('original API failure'),
+            diagnostic_error=OSError('diagnostic unavailable'))
 
     def test_missing_unauthenticated_session_guard_fails_and_cleans_up(self):
         self.run_launch(PROFILE, session_ready=False)

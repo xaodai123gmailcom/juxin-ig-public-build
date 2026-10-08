@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$LogPath,
     [ValidateRange(10, 600)][int]$TimeoutSeconds = 180,
     [switch]$RequireNonAsciiSource,
-    [string]$ExpectedCacheRoot = ""
+    [string]$ExpectedCacheRoot = "",
+    [scriptblock]$DiagnosticObserver = $null
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,7 +58,7 @@ $CleanupFailures = @()
 $StdoutPath = [IO.Path]::GetFullPath($LogPath) + ".stdout"
 $StderrPath = [IO.Path]::GetFullPath($LogPath) + ".stderr"
 try {
-    $Receipt = Invoke-IgacOwnedProcess -Request @{
+    $Receipt = Invoke-IgacOwnedProcess -DiagnosticObserver $DiagnosticObserver -Request @{
         executable = $ResolvedExecutable
         arguments = @()
         workingDirectory = $WorkingDirectory

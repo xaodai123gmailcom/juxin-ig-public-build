@@ -65,6 +65,19 @@ INSTALLED_PHASE_SECONDS = {'debugger': 30, 'renderer': 210, 'preload': 15,
 INSTALLED_TIMEOUT_SECONDS = 420  # 405s of phase caps plus 15s bookkeeping.
 
 
+INSTALLED_DIAGNOSTIC_PHASES = frozenset({'started', 'source-binding', 'import-setup', 'seed',
+    'launch', 'debugger', 'renderer', 'preload', 'readiness', 'api', 'shutdown', 'validation', 'complete'})
+
+
+def diagnostic_phase(phase):
+    """Fixed runner-local observations, never evidence of a passing phase."""
+    try:
+        if type(phase) is str and phase in INSTALLED_DIAGNOSTIC_PHASES:
+            print('INSTALLED_RECOVERY_PHASE=' + phase, flush=True)
+    except BaseException:
+        pass  # Unavailable diagnostic output cannot change the original outcome.
+
+
 class InstalledRecoveryDebuggerTimeout(RuntimeError): pass
 class InstalledRecoveryRendererTimeout(RuntimeError): pass
 class InstalledRecoveryRendererAmbiguous(RuntimeError): pass
@@ -391,13 +404,16 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
     require((executable.parent / 'resources/app.asar').is_file(), 'Packaged desktop app.asar is missing')
     prior = json.loads(Path(core_report).read_text(encoding='utf-8-sig'))['nurture_cleanup_upgrade']
     require(prior.get('verified') is True and prior.get('persisted_state', {}).get('verified') is True and prior.get('runtime', {}).get('frozen') is True and prior['runtime'].get('windows') is True and os.path.normcase(prior['runtime'].get('executable', '')) == os.path.normcase(str(core_executable)) and prior['runtime'].get('executable_sha256') == fixture.legacy.file_sha256(core_executable), 'Prior strict R6.3 frozen upgrade proof does not bind this installed Core')
+    diagnostic_phase('source-binding')
     binding = source_binding()
+    diagnostic_phase('import-setup')
     from playwright.sync_api import sync_playwright
     log_path = Path(log_path).resolve(); log_path.parent.mkdir(parents=True, exist_ok=True)
     with core_probe.probe_directory(prefix='Juxin-InstalledRecoveryR64-') as temporary:
         root = Path(temporary)
         user_data = root / 'roaming/juxin-ig-audience-collector-newgen'
         data = user_data / 'data'
+        diagnostic_phase('seed')
         manifest_path, manifest = fixture.seed(data)
         manifest_hash = fixture.legacy.file_sha256(manifest_path)
         env = environment()
@@ -409,6 +425,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
         # All browser web traffic is redirected to an unused loopback port. The
         # retired feature has no publishing runtime; archival is checked separately.
         args = [str(executable), '--user-data-dir=' + str(user_data), '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=' + str(debug_port), '--proxy-server=http://127.0.0.1:' + str(blocked_proxy), '--proxy-bypass-list=localhost;127.0.0.1', '--disable-background-networking']
+        diagnostic_phase('launch')
         with log_path.open('wb') as log:
             launch_perf_ns = time.perf_counter_ns()
             process = subprocess.Popen(args, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -442,6 +459,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
             watchdog = threading.Timer(timeout, terminate_owned_tree)
             watchdog.daemon = True; watchdog.start()
             try:
+                diagnostic_phase('debugger')
                 with sync_playwright() as playwright:
                     from playwright.sync_api import Error as PlaywrightError
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['debugger'], InstalledRecoveryDebuggerTimeout, cleanup=cleanup_owned) as deadline:
@@ -456,8 +474,10 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                             except PlaywrightError:
                                 require_owned_process(process)
                                 time.sleep(min(.1, max(0, deadline - time.monotonic())))
+                    diagnostic_phase('renderer')
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['renderer'], InstalledRecoveryRendererTimeout, cleanup=cleanup_owned) as deadline:
                         page = wait_installed_renderer(browser, executable.parent, process, deadline)
+                    diagnostic_phase('preload')
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['preload'], InstalledRecoveryPreloadTimeout, cleanup=cleanup_owned) as deadline:
                         renderer_url = wait_installed_preload(browser, executable.parent, process, page, deadline)
                     def api(path, body=None):
@@ -472,6 +492,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                         }""", {'url': renderer_url, 'path': path, 'body': body})
                         require_owned_process(process)
                         return value
+                    diagnostic_phase('readiness')
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['readiness'], InstalledRecoveryReadinessTimeout, cleanup=cleanup_owned) as deadline:
                         while True:
                             if time.monotonic() >= deadline:
@@ -482,10 +503,12 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                             dispatch_browser_events(browser, deadline)
                         runtime = installed_core_process(process.pid, core_executable)
                         ready_perf_ns = time.perf_counter_ns()
+                    diagnostic_phase('api')
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['api'], InstalledRecoveryApiTimeout, cleanup=cleanup_owned) as deadline:
                         result = exercise(api, data, manifest, timeout=deadline - time.monotonic())
                     # Browser.close reaches Electron's real before-quit path,
                     # which drains the Core and owns its shutdown deadline.
+                    diagnostic_phase('shutdown')
                     with installed_phase(process, end, INSTALLED_PHASE_SECONDS['shutdown'], InstalledRecoveryShutdownTimeout, cleanup=cleanup_owned) as deadline:
                         cdp = browser.new_browser_cdp_session()
                         try: cdp.send('Browser.close')
@@ -520,6 +543,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                             raise
         if timed_out.is_set():
             raise InstalledRecoveryTimeout('Installed recovery process deadline expired')
+        diagnostic_phase('validation')
         require(fixture.legacy.file_sha256(manifest_path) == manifest_hash, 'Installed app changed the external input manifest')
         result['persisted_state'] = fixture.inspect(data, manifest, phase='complete')
         proof = {**result, **binding, 'desktop_app_asar_sha256': fixture.legacy.file_sha256(executable.parent / 'resources/app.asar'), 'verified': True, 'contract': fixture.CONTRACT, 'platform': sys.platform,
@@ -534,6 +558,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
 
 
 def main():
+    diagnostic_phase('started')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable', type=Path, required=True)
     parser.add_argument('--core-executable', type=Path, required=True)
@@ -559,6 +584,7 @@ def main():
             pass  # Diagnostic output cannot turn the failed proof into success.
         print('INSTALLED_RECOVERY_R64=FAIL ' + str(error), flush=True)
         return 1
+    diagnostic_phase('complete')
     print('INSTALLED_RECOVERY_R64=PASS ' + json.dumps(proof, ensure_ascii=False, sort_keys=True), flush=True)
     return 0
 

@@ -93,7 +93,8 @@ function Read-IgacOwnedLog {
 
 function Invoke-IgacOwnedProcess {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][hashtable]$Request, [switch]$StreamOutput, [string]$SupervisorPython = "")
+    param([Parameter(Mandatory = $true)][hashtable]$Request, [switch]$StreamOutput, [string]$SupervisorPython = "",
+        [scriptblock]$DiagnosticObserver = $null)
     $Python = Get-IgacSupervisorPython -PreferredExecutable $SupervisorPython
     $Helper = Join-Path $PSScriptRoot "owned_process.py"
     if (-not (Test-Path -LiteralPath $Helper -PathType Leaf)) { throw "Owned process helper is missing; no target was started" }
@@ -101,6 +102,15 @@ function Invoke-IgacOwnedProcess {
     $Request.requestId = [Guid]::NewGuid().ToString("N")
     $ReceiptPath = [IO.Path]::GetFullPath([string]$Request.stdoutPath) + ".owned-" + [Guid]::NewGuid().ToString("N") + ".json"
     $Request.receiptPath = $ReceiptPath
+    # Optional CI observation receives this exact invocation, never a directory search.
+    # It is not part of acceptance and cannot replace a receipt or original error.
+    if ($null -ne $DiagnosticObserver) {
+        try { & $DiagnosticObserver 'bound' @{
+            requestId = $Request.requestId; receiptPath = $ReceiptPath
+            executable = [string]$Request.executable; timeoutSeconds = $Request.timeoutSeconds
+            budgetLabel = [string]$Request.budgetLabel
+        } | Out-Null } catch { }
+    }
     $Json = $Request | ConvertTo-Json -Depth 8 -Compress
     $Encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Json))
     $Process = New-Object System.Diagnostics.Process
@@ -122,14 +132,19 @@ function Invoke-IgacOwnedProcess {
     $ProgressReader = $null
     $ProgressTask = $null
     $PrimaryFailure = $null
+    $DiagnosticStage = 'supervisor-start'
+    $OuterDeadlineExceeded = $false
+    $CleanupWaitTimedOut = $false
     try {
         $Started = $Process.Start()
         if (-not $Started) { throw "Owned process supervisor did not start; no target receipt exists" }
         $LimitMilliseconds = [int][Math]::Ceiling(([double]$Request.timeoutSeconds + [double]$Request.drainSeconds + [double]$Request.terminationSeconds + 30) * 1000)
+        $DiagnosticStage = 'supervisor-wait'
         $Watch = [Diagnostics.Stopwatch]::StartNew()
         $ProgressBuffer = New-Object char[] 16384
         while (-not $Process.WaitForExit(250)) {
             if ($Watch.ElapsedMilliseconds -ge $LimitMilliseconds) {
+                $OuterDeadlineExceeded = $true
                 $Process.StandardInput.Close()
                 if (-not $Process.WaitForExit([int](([double]$Request.terminationSeconds + 5) * 1000))) {
                     throw "Owned supervisor exceeded its outer deadline; tree cleanup is unconfirmed; logs: $($Request.stdoutPath)"
@@ -140,18 +155,22 @@ function Invoke-IgacOwnedProcess {
                 if ($null -eq $ProgressReader -and (Test-Path -LiteralPath $Request.stdoutPath -PathType Leaf)) {
                     # Local-file open and console host writes remain OS-I/O limits;
                     # target supervision runs independently in the Python owner.
+                    $DiagnosticStage = 'progress-log-open'
                     $ProgressStream = New-Object IO.FileStream($Request.stdoutPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete), 4096, $true)
                     $ProgressReader = New-Object IO.StreamReader($ProgressStream, [Text.Encoding]::UTF8, $true)
                 }
                 if ($null -ne $ProgressReader) {
+                    $DiagnosticStage = 'progress-log-read'
                     $ProgressTask = $ProgressReader.ReadAsync($ProgressBuffer, 0, $ProgressBuffer.Length)
                     if (-not $ProgressTask.Wait(2000)) { throw "Owned live output read exceeded its deadline; full log retained: $($Request.stdoutPath)" }
                     $Count = $ProgressTask.GetAwaiter().GetResult()
                     if ($Count -gt 0) { Write-Host -ErrorAction Stop -NoNewline (-join $ProgressBuffer[0..($Count - 1)]) }
                 }
             }
+            $DiagnosticStage = 'supervisor-wait'
         }
         if ($StreamOutput) {
+            $DiagnosticStage = 'final-log-read'
             if ($null -ne $ProgressReader) {
                 $ProgressTask = $ProgressReader.ReadToEndAsync()
                 if (-not $ProgressTask.Wait(10000)) { throw "Owned final output read exceeded its deadline; full log retained: $($Request.stdoutPath)" }
@@ -161,15 +180,18 @@ function Invoke-IgacOwnedProcess {
             }
             if (-not [string]::IsNullOrEmpty($Remainder)) { Write-Host -ErrorAction Stop -NoNewline $Remainder }
         }
+        $DiagnosticStage = 'receipt-read'
         if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
             throw "Owned supervisor exited without a complete receipt (exit $($Process.ExitCode)); cleanup is unconfirmed; logs: $($Request.stdoutPath)"
         }
         $Receipt = (Read-IgacOwnedLog -Path $ReceiptPath -MaximumBytes 65536) | ConvertFrom-Json
+        $DiagnosticStage = 'receipt-validation'
         $MatchesRequest = Test-IgacOwnedReceiptMatches $Receipt $Request
         $CleanupConfirmed = $MatchesRequest -and (Test-IgacOwnedCleanupReceipt $Receipt)
         if (-not $MatchesRequest -or -not (Test-IgacOwnedTerminalReceipt $Receipt) -or $Process.ExitCode -ne 0) {
             throw "Owned process failed: $($Receipt.outcome); cleanup confirmed=$CleanupConfirmed; errors=$($Receipt.errors -join '; '); logs: $($Request.stdoutPath); receipt: $ReceiptPath"
         }
+        $DiagnosticStage = 'returned'
         return $Receipt
     } catch {
         $PrimaryFailure = $_
@@ -180,6 +202,7 @@ function Invoke-IgacOwnedProcess {
             # EOF cancellation has its own bound even after an output error.
             try {
                 if (-not $Process.HasExited -and -not $Process.WaitForExit([int](([double]$Request.terminationSeconds + 5) * 1000))) {
+                    $CleanupWaitTimedOut = $true
                     Write-Warning "Owned cleanup remains unconfirmed; retain the original log and receipt paths"
                 }
             } catch { Write-Warning "Owned supervisor exit could not be observed during cleanup" }
@@ -187,6 +210,19 @@ function Invoke-IgacOwnedProcess {
         }
         if ($null -eq $ProgressTask -or $ProgressTask.IsCompleted) {
             if ($null -ne $ProgressReader) { $ProgressReader.Dispose() } elseif ($null -ne $ProgressStream) { $ProgressStream.Dispose() }
+        }
+        # Observe only after the unchanged EOF/cleanup wait, including late receipts.
+        if ($null -ne $DiagnosticObserver) {
+            try {
+                $SupervisorExitCode = $null
+                if ($Started -and $Process.HasExited) { $SupervisorExitCode = [int]$Process.ExitCode }
+                & $DiagnosticObserver 'settled' @{
+                    requestId = $Request.requestId; adapterStage = $DiagnosticStage
+                    supervisorStarted = [bool]$Started; supervisorExitCode = $SupervisorExitCode
+                    outerDeadlineExceeded = [bool]$OuterDeadlineExceeded
+                    cleanupWaitTimedOut = [bool]$CleanupWaitTimedOut
+                } | Out-Null
+            } catch { }
         }
         $Process.Dispose()
     }

@@ -1,10 +1,18 @@
+param(
+    [string]$DiagnosticDirectory = "",
+    [string]$DiagnosticRunNonce = "",
+    [string]$DiagnosticInvocationId = ""
+)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\scripts\invoke_native_logged.ps1"
+. "$PSScriptRoot\public_ci_installed_observer.ps1"
+$DiagnosticContext = @{ Directory = $DiagnosticDirectory; RunNonce = $DiagnosticRunNonce; InvocationId = $DiagnosticInvocationId }
 $name = 'Juxin-IG-Audience-Collector-NewGen-Setup-3.0.4-x64.exe'
 $installer = (Resolve-Path -LiteralPath (Join-Path 'installer-output' $name)).Path
 $installRoot = Join-Path $env:LOCALAPPDATA 'Programs\juxin-ig-audience-collector-newgen'
 if (Test-Path -LiteralPath $installRoot) { throw 'Install verification requires a fresh destination' }
-$InstallExitCode = Invoke-IgacNativeCommandWithLog -FilePath $installer -ArgumentList @('/S') -LogPath 'installer-output\installed-nsis.log' -TimeoutSeconds 180
+$NsisObserver = New-PublicInstalledObserver @DiagnosticContext -Phase nsis
+$InstallExitCode = Invoke-IgacNativeCommandWithLog -FilePath $installer -ArgumentList @('/S') -LogPath 'installer-output\installed-nsis.log' -TimeoutSeconds 180 -DiagnosticObserver $NsisObserver
 if ($InstallExitCode -ne 0) { throw 'Final NSIS installation failed' }
 $core = Join-Path $installRoot 'resources\backend\collector_core'
 $exe = Join-Path $core 'collector_core.exe'
@@ -15,7 +23,8 @@ if ($policy.mode -ne 'installed-chrome-required') { throw 'Installed browser req
 $python = (Resolve-Path '.venv\Scripts\python.exe').Path
 & $python scripts\verify_openvino_windows.py frozen --manifest build\openvino-native-manifest.json --dist $core
 if ($LASTEXITCODE -ne 0) { throw 'Installed native model files failed verification' }
-& .\scripts\test_frozen_openvino.ps1 -Executable $exe -LogPath installer-output\installed-openvino-smoke.log -TimeoutSeconds 180
+$NativeObserver = New-PublicInstalledObserver @DiagnosticContext -Phase native-smoke
+& .\scripts\test_frozen_openvino.ps1 -Executable $exe -LogPath installer-output\installed-openvino-smoke.log -TimeoutSeconds 180 -DiagnosticObserver $NativeObserver
 & $python -I -X utf8 scripts\verify_frozen_core_service.py --executable $exe --log installer-output\installed-core-service-smoke.log --pure-ig --snapshot-scale --collection-completion --standalone-nurture --nurture-cleanup-upgrade --report installer-output\installed-scale-verification.json
 if ($LASTEXITCODE -ne 0) { throw 'Installed Core service failed verification' }
 $scale = [IO.File]::ReadAllText((Join-Path $PWD 'installer-output\installed-scale-verification.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
@@ -58,7 +67,8 @@ $recoveryStderr = Join-Path $PWD 'installer-output\installed-recovery-r64-stderr
 # Allow 180s first-Core startup plus bounded debugger/window/preload/API/shutdown phases.
 # The outer bound includes owned-runtime cleanup after the verifier's 420s watchdog.
 $recoveryArguments = @('-I', '-X', 'utf8', 'scripts\verify_installed_recovery_r64.py', '--executable', $installedAppExe, '--core-executable', $exe, '--core-report', 'installer-output\installed-scale-verification.json', '--log', 'installer-output\installed-recovery-r64.log', '--report', 'installer-output\installed-recovery-r64.json', '--timeout', '420')
-$RecoveryExitCode = Invoke-IgacNativeCommandWithLog -FilePath $python -ArgumentList $recoveryArguments -LogPath $recoveryStdout -TimeoutSeconds 540
+$RecoveryObserver = New-PublicInstalledObserver @DiagnosticContext -Phase recovery
+$RecoveryExitCode = Invoke-IgacNativeCommandWithLog -FilePath $python -ArgumentList $recoveryArguments -LogPath $recoveryStdout -TimeoutSeconds 540 -DiagnosticObserver $RecoveryObserver
 if ($RecoveryExitCode -ne 0) { throw 'Actual installed desktop R6.4 API recovery proof failed' }
 if (!(Select-String -LiteralPath $recoveryStdout -Pattern '^INSTALLED_RECOVERY_R64=PASS ' -Quiet)) { throw 'Actual installed recovery success marker is missing' }
 $recovery = [IO.File]::ReadAllText((Join-Path $PWD 'installer-output\installed-recovery-r64.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json

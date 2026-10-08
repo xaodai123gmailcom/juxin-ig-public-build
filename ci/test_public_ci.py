@@ -70,13 +70,15 @@ class PublicContracts(unittest.TestCase):
                  patch.object(ci, 'verify_run_state', return_value={'nonce':'a'*32}), \
                  patch.object(ci, 'read_json', return_value={'status':'passed'}), \
                  patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+                 patch.object(ci, 'prepare_installed_observation', return_value=['-DiagnosticDirectory','fixed-private-path']), \
                  patch.object(ci, 'run_owned', side_effect=failure) as run, \
                  patch.object(common, 'bounded_log_tail', wraps=common.bounded_log_tail) as tail, \
                  patch.object(ci.runpy, 'run_path') as validate, patch.object(ci, 'installed_hashes') as hashes:
                 with self.assertRaises(RuntimeError) as caught:
                     ci.installed()
                 self.assertIs(caught.exception, failure)
-                run.assert_called_once_with('actual-installed-product-acceptance', ['powershell'], 3600)
+                run.assert_called_once_with('actual-installed-product-acceptance',
+                    ['powershell','-DiagnosticDirectory','fixed-private-path'], 3600)
                 tail.assert_called_once_with(log)
                 validate.assert_not_called(); hashes.assert_not_called()
                 summary = common.failure_diagnostics()
@@ -101,6 +103,7 @@ class PublicContracts(unittest.TestCase):
                      patch.object(ci, 'verify_run_state', return_value={'nonce':'a'*32}), \
                      patch.object(ci, 'read_json', return_value={'status':'passed'}), \
                      patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+                     patch.object(ci, 'prepare_installed_observation', return_value=['-DiagnosticDirectory','fixed-private-path']), \
                      patch.object(ci, 'run_owned', side_effect=failure), \
                      patch.object(common, 'parse_diagnostic_tails', side_effect=RuntimeError('private parser error')):
                     if not missing:
@@ -118,11 +121,13 @@ class PublicContracts(unittest.TestCase):
              patch.object(ci, 'state_root', return_value=Path('/synthetic-run')), \
              patch.object(ci, 'read_json', return_value={'status':'passed'}), \
              patch.object(ci, 'validate_source_build'), patch.object(ci, 'powershell', return_value=['powershell']), \
+             patch.object(ci, 'prepare_installed_observation', return_value=['-DiagnosticDirectory','fixed-private-path']), \
              patch.object(ci, 'run_owned') as run, patch.object(ci.runpy, 'run_path') as validate, \
              patch.object(ci, 'installed_hashes', return_value={'synthetic':'hash'}) as hashes, \
              patch.object(ci, 'save_failure_diagnostic') as diagnostic:
             self.assertEqual(ci.installed(), {'synthetic':'hash'})
-            run.assert_called_once_with('actual-installed-product-acceptance', ['powershell'], 3600)
+            run.assert_called_once_with('actual-installed-product-acceptance',
+                    ['powershell','-DiagnosticDirectory','fixed-private-path'], 3600)
             validate.assert_called_once_with(str(ci.ROOT / 'ci/public_ci_validate_installed.py'))
             hashes.assert_called_once_with(); diagnostic.assert_not_called()
 

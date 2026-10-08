@@ -190,6 +190,7 @@ class ApiOwnershipTests(unittest.TestCase):
         api = FakeApi(); native = owned.WindowsContainment(api, makedirs=lambda _: None)
         native.launch(request())
         self.assertEqual(native.pid, 4567)
+        self.assertEqual(native.diagnostic_launch_stage, 'launched')
         self.assertEqual(api.events, ['create-job','kill-on-close','initialize-attributes','handle-list','job-list',
                                      'create-suspended-in-job','verify-membership','resume','delete-attributes'])
         native.close(); native.close()
@@ -198,6 +199,12 @@ class ApiOwnershipTests(unittest.TestCase):
         self.assertEqual(api.job_members, 0)
 
     def test_every_launch_failure_closes_only_owned_handles_and_never_runs_unsupervised(self):
+        stages = {'create-job': 'job-setup', 'limits': 'job-setup', 'output': 'log-open',
+                  'null-input': 'target-setup', 'attribute-size': 'target-setup',
+                  'attribute-init': 'target-setup', 'inheritance': 'target-setup',
+                  'job-list': 'target-setup', 'create-process': 'target-create',
+                  'membership-api': 'target-membership', 'membership-false': 'target-membership',
+                  'resume': 'target-resume'}
         for failure in ('create-job','limits','output','null-input','attribute-size','attribute-init','inheritance',
                         'job-list','create-process','membership-api','membership-false','resume'):
             with self.subTest(failure=failure):
@@ -205,6 +212,8 @@ class ApiOwnershipTests(unittest.TestCase):
                 clock = Clock()
                 receipt = owned.supervise(request(), containment=native, clock=clock.now, sleep=clock.sleep)
                 self.assertEqual(receipt['outcome'], 'supervision-error')
+                self.assertEqual(receipt['diagnosticLaunchStage'], stages[failure])
+                self.assertEqual(receipt['elapsedSeconds'], 0)
                 self.assertFalse(owned.terminal_receipt(receipt))
                 self.assertEqual(set(api.closed), set(api.handles))
                 self.assertTrue(api.unrelated['alive'])
@@ -213,6 +222,28 @@ class ApiOwnershipTests(unittest.TestCase):
                 if failure in ('membership-api','membership-false'):
                     self.assertIn('terminate-held-suspended-process', api.events)
                 self.assertEqual(api.attributes_deleted, int('initialize-attributes' in api.events and failure != 'attribute-init'))
+
+    def test_launch_diagnostic_values_are_fixed_and_missing_or_broken_stubs_are_unknown(self):
+        self.assertEqual(owned.DIAGNOSTIC_LAUNCH_STAGES, {'not-started', 'job-setup', 'log-open',
+            'target-setup', 'target-create', 'target-membership', 'target-resume', 'launched'})
+        class Stub:
+            def close(self): pass
+        class BrokenStub(Stub):
+            @property
+            def diagnostic_launch_stage(self):
+                raise RuntimeError('private diagnostic detail')
+        cancelled = threading.Event(); cancelled.set()
+        for native in (Stub(), BrokenStub()):
+            result = owned.supervise(request(), containment=native, cancelled=cancelled)
+            self.assertEqual(result['diagnosticLaunchStage'], 'unknown')
+            self.assertEqual(result['outcome'], 'cancelled-before-launch')
+            self.assertEqual(result['errors'], [])
+        for value in ('unreviewed-private-value', None, [], True):
+            native = Stub(); native.diagnostic_launch_stage = value
+            result = owned.supervise(request(), containment=native, cancelled=cancelled)
+            self.assertEqual(result['diagnosticLaunchStage'], 'unknown')
+            self.assertEqual(result['outcome'], 'cancelled-before-launch')
+            self.assertEqual(result['errors'], [])
 
     def test_combined_stdout_stderr_handle_is_inherited_and_closed_once(self):
         api = FakeApi(); native = owned.WindowsContainment(api, makedirs=lambda _: None)
@@ -258,6 +289,13 @@ class LifecycleTests(unittest.TestCase):
     def test_clean_success_preserves_real_target_pid(self):
         result, api, _ = self.run_case(root_exited=True, job_members=0)
         self.assertTrue(owned.terminal_receipt(result))
+        self.assertEqual(result['diagnosticLaunchStage'], 'launched')
+        self.assertNotIn('diagnosticLaunchStage', owned.RECEIPT_KEYS)
+        # Additive runner-local observations are never acceptance evidence.
+        for stage in (None, 'not-started', 'unknown', 'unreviewed', []):
+            self.assertTrue(owned.terminal_receipt({**result, 'diagnosticLaunchStage': stage}))
+        legacy = dict(result); legacy.pop('diagnosticLaunchStage')
+        self.assertTrue(owned.terminal_receipt(legacy))
         self.assertEqual(result['targetExitCode'], 0)
         self.assertEqual(result['launchTargetPid'], 4567)
         self.assertEqual(result['supervisorPid'], os.getpid())
@@ -325,6 +363,7 @@ class LifecycleTests(unittest.TestCase):
         api = FakeApi(); native = owned.WindowsContainment(api, makedirs=lambda _: None)
         result = owned.supervise(request(), containment=native, cancelled=event)
         self.assertEqual(result['outcome'], 'cancelled-before-launch')
+        self.assertEqual(result['diagnosticLaunchStage'], 'not-started')
         self.assertEqual(api.events, [])
 
 
