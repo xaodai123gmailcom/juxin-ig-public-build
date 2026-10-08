@@ -115,7 +115,9 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
     def test_phase_markers_are_fixed_best_effort_observations(self):
         diagnostic = functions('diagnostic_phase').diagnostic_phase
         expected = {'started', 'source-binding', 'import-setup', 'seed', 'launch', 'debugger',
-                    'renderer', 'preload', 'readiness', 'api', 'shutdown', 'validation', 'complete'}
+                    'renderer', 'preload', 'readiness', 'api', 'shutdown', 'shutdown-endpoint',
+                    'shutdown-request', 'shutdown-desktop', 'shutdown-core', 'shutdown-driver',
+                    'shutdown-complete', 'failure-cleanup', 'temporary-cleanup', 'temporary-cleanup-returned', 'validation', 'complete'}
         self.assertEqual(diagnostic.__globals__['INSTALLED_DIAGNOSTIC_PHASES'], expected)
         output = io.StringIO()
         with patch('sys.stdout', output):
@@ -220,14 +222,22 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
                 process.wait.side_effect = subprocess.TimeoutExpired('desktop', 60)
             binding = {'source_commit': 'd' * 40, 'source_provenance': {'schema': 1}}
             validate = Mock(side_effect=lambda proof, **kwargs: proof)
-            probe = functions('environment', 'probe_installed', 'installed_phase', 'require_owned_process', fixture=fixture,
+            owned_tools = Mock(interrupted=False, watchdogs=[])
+            def request_shutdown(*args):
+                scope = probe.probe_installed.__globals__
+                scope['diagnostic_phase']('shutdown-endpoint')
+                scope['diagnostic_phase']('shutdown-request')
+            raw_shutdown = Mock(side_effect=request_shutdown)
+            probe = functions('environment', 'probe_installed', 'installed_phase', 'require_owned_process',
+                'finish_installed_shutdown', 'shutdown_remaining', 'installed_probe_directory', fixture=fixture,
                 core_probe=SimpleNamespace(probe_directory=lambda **kwargs: nullcontext(root)),
                 source_binding=Mock(return_value=binding), reserve_port=Mock(side_effect=[31001, 31002, 31003]),
                 subprocess=native, threading=threads, time=clock, exact_renderer=Mock(return_value=page),
                 wait_installed_renderer=Mock(return_value=page), wait_installed_preload=Mock(return_value=page.url),
                 dispatch_browser_events=dispatch,
                 installed_core_process=observed_core, exercise=exercise,
-                stop_owned_runtime=cleanup, validate_proof=validate)
+                stop_owned_runtime=cleanup, validate_proof=validate, request_installed_shutdown=raw_shutdown)
+            probe.probe_installed.__globals__['OwnedRecoveryTools'] = lambda: owned_tools
             if diagnostic_error:
                 probe.probe_installed.__globals__['print'] = Mock(side_effect=diagnostic_error)
             output = io.StringIO()
@@ -253,7 +263,12 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
                     exercise.assert_called_once()
                     self.assertEqual(exercise.call_args.args[1:], (data, manifest))
                     fixture.inspect.assert_called_once_with(data, manifest, phase='complete')
-                    browser.new_browser_cdp_session.return_value.send.assert_called_once_with('Browser.close')
+                    browser.new_browser_cdp_session.assert_not_called()
+                    raw_shutdown.assert_called_once_with(process, 31002, 60, owned_tools)
+                    playwright.stop.assert_called_once_with()
+                    owned_tools.bind_driver.assert_called_once_with(playwright)
+                    owned_tools.abort.assert_not_called()
+                    owned_tools.release.assert_called_once_with()
                     process.wait.assert_called_once()
                     self.assertIn(str(runtime['pid']), native.run.call_args.args[0][-1])
                     cleanup.assert_not_called()
@@ -261,9 +276,16 @@ class InstalledProfileEnvironmentTests(unittest.TestCase):
             if session_ready:
                 phases.append('api')
                 if not exercise_error and not fire_watchdogs:
-                    phases.append('shutdown')
-                    if not late_teardown and not shutdown_hang:
-                        phases.append('validation')
+                    phases += ['shutdown', 'shutdown-endpoint', 'shutdown-request', 'shutdown-desktop']
+                    if not shutdown_hang:
+                        phases += ['shutdown-core', 'shutdown-driver', 'shutdown-complete']
+            if exercise_error or not session_ready or fire_watchdogs or shutdown_hang:
+                phases += ['failure-cleanup', 'failure-cleanup']
+            elif late_teardown:
+                phases.append('failure-cleanup')
+            else:
+                phases.append('validation')
+            phases += ['temporary-cleanup', 'temporary-cleanup-returned']
             self.assertEqual(output.getvalue().splitlines(), [] if diagnostic_error else
                 ['INSTALLED_RECOVERY_PHASE=' + phase for phase in phases])
             self.assertEqual(len(timers), 5 if not session_ready else 6 if exercise_error or fire_watchdogs else 7)

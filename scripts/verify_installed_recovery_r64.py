@@ -66,7 +66,9 @@ INSTALLED_TIMEOUT_SECONDS = 420  # 405s of phase caps plus 15s bookkeeping.
 
 
 INSTALLED_DIAGNOSTIC_PHASES = frozenset({'started', 'source-binding', 'import-setup', 'seed',
-    'launch', 'debugger', 'renderer', 'preload', 'readiness', 'api', 'shutdown', 'validation', 'complete'})
+    'launch', 'debugger', 'renderer', 'preload', 'readiness', 'api', 'shutdown',
+    'shutdown-endpoint', 'shutdown-request', 'shutdown-desktop', 'shutdown-core', 'shutdown-driver',
+    'shutdown-complete', 'failure-cleanup', 'temporary-cleanup', 'temporary-cleanup-returned', 'validation', 'complete'})
 
 
 def diagnostic_phase(phase):
@@ -95,7 +97,7 @@ def require_owned_process(process):
 
 
 @contextmanager
-def installed_phase(process, end, seconds, error_type, *, cleanup):
+def installed_phase(process, end, seconds, error_type, *, cleanup, watchdogs=None):
     """Bound even synchronous CDP/evaluate calls, which have no API timeout."""
     require(math.isfinite(end) and math.isfinite(seconds) and seconds > 0,
         'Installed phase deadline must be finite and positive')
@@ -115,6 +117,7 @@ def installed_phase(process, end, seconds, error_type, *, cleanup):
         try: cleanup()
         except Exception: pass  # The enclosing finally retries owned cleanup.
     watchdog = threading.Timer(deadline - now, terminate)
+    if watchdogs is not None: watchdogs.append(watchdog)
     watchdog.daemon = True; watchdog.start()
     try:
         yield deadline
@@ -135,6 +138,206 @@ def installed_phase(process, end, seconds, error_type, *, cleanup):
         watchdog.join(timeout=45)
         if watchdog.is_alive() or expired.is_set() or time.monotonic() >= deadline:
             raise category('Installed recovery phase deadline expired') from None
+
+
+class OwnedRecoveryTools:
+    """Only this verifier's sockets and exact pinned Playwright driver.
+
+    Capture the driver on its owning thread. Watchdogs never touch asyncio
+    Process/transport methods, resolve a PID, or terminate a process by name.
+    A Windows duplicate HANDLE remains valid even after Playwright reaps it.
+    """
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.interrupted = False
+        self.raw_socket = None
+        self.driver = None
+        self.driver_handle = None
+        self.kernel = None
+        self.watchdogs = []
+
+    def bind_driver(self, playwright):
+        import asyncio
+        import importlib.metadata
+        from playwright._impl._driver import compute_driver_executable
+        from playwright._impl._transport import PipeTransport
+        from playwright.sync_api._context_manager import PlaywrightContextManager
+        require(importlib.metadata.version('playwright') == '1.62.0', 'Unreviewed Playwright driver version')
+        transport = playwright._impl_obj._connection._transport
+        require(type(transport) is PipeTransport and
+            type(getattr(playwright.stop, '__self__', None)) is PlaywrightContextManager,
+            'Unreviewed Playwright transport or stop binding')
+        asynchronous = transport._proc
+        require(type(asynchronous) is asyncio.subprocess.Process, 'Unreviewed Playwright process binding')
+        driver = asynchronous._transport.get_extra_info('subprocess')
+        expected = (*compute_driver_executable(), 'run-driver')
+        expected_type = ('asyncio.windows_utils', 'Popen') if sys.platform == 'win32' else ('subprocess', 'Popen')
+        require((type(driver).__module__, type(driver).__name__) == expected_type and
+            tuple(driver.args) == expected and type(driver.pid) is int and driver.pid > 0 and
+            driver.pid == asynchronous.pid and driver.poll() is None,
+            'Playwright driver identity changed')
+        handle = kernel = None
+        if sys.platform == 'win32':
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            for name, arguments, result in (
+                ('GetCurrentProcess', [], wintypes.HANDLE),
+                ('DuplicateHandle', [wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
+                    ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.BOOL),
+                ('GetProcessId', [wintypes.HANDLE], wintypes.DWORD),
+                ('WaitForSingleObject', [wintypes.HANDLE, wintypes.DWORD], wintypes.DWORD),
+                ('TerminateProcess', [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL),
+                ('CloseHandle', [wintypes.HANDLE], wintypes.BOOL)):
+                function = getattr(kernel, name); function.argtypes = arguments; function.restype = result
+            duplicate = wintypes.HANDLE()
+            current = kernel.GetCurrentProcess()
+            require(kernel.DuplicateHandle(current, int(driver._handle), current,
+                ctypes.byref(duplicate), 0, False, 2), 'Cannot retain owned Playwright driver handle')
+            handle = duplicate.value
+            if kernel.GetProcessId(handle) != driver.pid:
+                kernel.CloseHandle(handle)
+                raise RuntimeError('Retained Playwright driver identity changed')
+        with self.lock:
+            if self.driver is not None:
+                if handle is not None: kernel.CloseHandle(handle)
+                raise RuntimeError('Playwright driver is already bound')
+            self.driver, self.driver_handle, self.kernel = driver, handle, kernel
+            interrupted = self.interrupted
+        if interrupted:
+            # The deadline may have fired while start() was yielding. A late
+            # exact driver must be stopped, not escape the expired latch.
+            self.abort()
+            raise RuntimeError('Playwright driver binding is no longer eligible')
+
+    @contextmanager
+    def socket(self, port, deadline):
+        require(type(port) is int and 0 < port < 65536, 'Owned debugger port is invalid')
+        raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            with self.lock:
+                require(not self.interrupted and self.raw_socket is None, 'Owned shutdown socket is no longer eligible')
+                self.raw_socket = raw
+            raw.settimeout(shutdown_remaining(deadline, 2))
+            raw.connect(('127.0.0.1', port))
+            with self.lock:
+                require(not self.interrupted, 'Owned shutdown socket is no longer eligible')
+            yield raw
+        finally:
+            with self.lock:
+                if self.raw_socket is raw: self.raw_socket = None
+            raw.close()
+
+    def abort(self):
+        # shutdown() interrupts a blocked send/read as well as a websocket
+        # handshake. close() alone may leave a blocking operation pending.
+        with self.lock:
+            self.interrupted = True
+            raw = self.raw_socket
+            if raw is not None:
+                try: raw.shutdown(socket.SHUT_RDWR)
+                except OSError: pass
+                raw.close()
+            if self.driver_handle is not None:
+                state = self.kernel.WaitForSingleObject(self.driver_handle, 0)
+                require(state in (0, 258), 'Cannot inspect retained Playwright driver')
+                if state == 258:
+                    require(self.kernel.TerminateProcess(self.driver_handle, 1), 'Cannot stop retained Playwright driver')
+            elif self.driver is not None:
+                # Popen's own wait/poll lock protects its child identity. This
+                # branch is for the local regression; installed proof is Windows.
+                if self.driver.poll() is None: self.driver.kill()
+
+    def release(self):
+        # Retain the handle until both watchdog layers have actually settled.
+        require(not any(timer.is_alive() for timer in self.watchdogs), 'Owned watchdog cleanup is still running')
+        with self.lock:
+            if self.driver_handle is not None:
+                require(self.kernel.CloseHandle(self.driver_handle), 'Cannot release retained Playwright driver')
+                self.driver_handle = None
+            self.driver = None
+
+
+def shutdown_remaining(deadline, cap):
+    remaining = deadline - time.monotonic()
+    if not math.isfinite(remaining) or not math.isfinite(cap) or cap <= 0 or remaining <= 0:
+        raise InstalledRecoveryShutdownTimeout('Installed shutdown deadline expired')
+    return min(cap, remaining)
+
+
+def request_installed_shutdown(process, debug_port, deadline, owned):
+    """Electron deliberately never ACKs Browser.close; send it without recv.
+
+    Use the existing production quit command, not app evaluation or a forced
+    process exit. HTTPConnection doesn't follow redirects or consult proxies;
+    the sync websocket handshake also rejects redirects. Both sockets are
+    registered before connecting so the enclosing deadline can interrupt I/O.
+    """
+    from http.client import HTTPConnection
+    from websockets.sync.client import connect
+    require_owned_process(process)
+    diagnostic_phase('shutdown-endpoint')
+    with owned.socket(debug_port, deadline) as raw:
+        connection = HTTPConnection('127.0.0.1', debug_port, timeout=shutdown_remaining(deadline, 2))
+        connection.sock = raw
+        try:
+            connection.request('GET', '/json/version', headers={'Connection': 'close'})
+            with connection.getresponse() as response:
+                require(response.status == 200, 'Owned debugger endpoint refused')
+                encoded = response.read(65537)
+                require(len(encoded) <= 65536, 'Owned debugger endpoint exceeded bound')
+                version = json.loads(encoded)
+        finally:
+            connection.close()
+    endpoint = version.get('webSocketDebuggerUrl') if type(version) is dict else None
+    require(type(endpoint) is str and re.fullmatch(
+        r'ws://127\.0\.0\.1:' + str(debug_port) + r'/devtools/browser/[A-Za-z0-9._:-]+', endpoint),
+        'Owned debugger websocket binding changed')
+    require_owned_process(process)
+    diagnostic_phase('shutdown-request')
+    with owned.socket(debug_port, deadline) as raw:
+        # websockets uses a receiver thread and blocking send; the owned raw
+        # socket watchdog is the hard bound even if the peer stops reading.
+        raw.settimeout(None)
+        with connect(endpoint, sock=raw, proxy=None, open_timeout=shutdown_remaining(deadline, 2),
+                close_timeout=shutdown_remaining(deadline, 1), ping_interval=None) as websocket:
+            websocket.send('{"id":1,"method":"Browser.close"}')
+    require(not owned.interrupted, 'Interrupted shutdown cannot prove normal exit')
+
+
+def finish_installed_shutdown(process, runtime, playwright, deadline, owned):
+    diagnostic_phase('shutdown-desktop')
+    try: process.wait(timeout=shutdown_remaining(deadline, 60))
+    except subprocess.TimeoutExpired:
+        raise InstalledRecoveryShutdownTimeout('Owned installed desktop did not shut down before deadline') from None
+    require(process.returncode == 0, 'Installed desktop shutdown was not clean')
+    diagnostic_phase('shutdown-core')
+    # A remaining or reused PID fails closed; cleanup is never passing evidence.
+    require(type(runtime.get('pid')) is int and runtime['pid'] > 0 and
+        runtime.get('parent_pid') == process.pid, 'Owned Core shutdown binding changed')
+    query = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+        'if(Get-Process -Id ' + str(runtime['pid']) + ' -ErrorAction SilentlyContinue){exit 9}'],
+        timeout=shutdown_remaining(deadline, 10))
+    require(query.returncode == 0, 'Installed desktop left its Core alive')
+    diagnostic_phase('shutdown-driver')
+    playwright.stop()
+    require(not owned.interrupted, 'Driver cleanup cannot prove normal shutdown')
+    shutdown_remaining(deadline, 60)
+    diagnostic_phase('shutdown-complete')
+
+
+@contextmanager
+def installed_probe_directory():
+    # Preserve the shared cleanup/error policy, but distinguish exception unwind
+    # from a still-running shutdown. These fixed observations prove no success.
+    try:
+        with core_probe.probe_directory(prefix='Juxin-InstalledRecoveryR64-') as temporary:
+            try:
+                yield temporary
+            finally:
+                diagnostic_phase('temporary-cleanup')
+    finally:
+        diagnostic_phase('temporary-cleanup-returned')
 
 
 def environment():
@@ -409,7 +612,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
     diagnostic_phase('import-setup')
     from playwright.sync_api import sync_playwright
     log_path = Path(log_path).resolve(); log_path.parent.mkdir(parents=True, exist_ok=True)
-    with core_probe.probe_directory(prefix='Juxin-InstalledRecoveryR64-') as temporary:
+    with installed_probe_directory() as temporary:
         root = Path(temporary)
         user_data = root / 'roaming/juxin-ig-audience-collector-newgen'
         data = user_data / 'data'
@@ -434,19 +637,23 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
             runtime = None
             shutdown_complete = False
             failed = False
+            owned_tools = OwnedRecoveryTools()
             cleanup_lock = threading.Lock()
             cleaned_identity = object()
             def cleanup_owned():
                 nonlocal cleaned_identity
-                if not cleanup_lock.acquire(timeout=45):
-                    raise RuntimeError('Owned runtime cleanup remained busy')
                 try:
-                    identity = None if runtime is None else runtime['pid']
-                    if cleaned_identity != identity:
-                        stop_owned_runtime(process, runtime)
-                        cleaned_identity = identity
+                    owned_tools.abort()
                 finally:
-                    cleanup_lock.release()
+                    if not cleanup_lock.acquire(timeout=45):
+                        raise RuntimeError('Owned runtime cleanup remained busy')
+                    try:
+                        identity = None if runtime is None else runtime['pid']
+                        if cleaned_identity != identity:
+                            stop_owned_runtime(process, runtime)
+                            cleaned_identity = identity
+                    finally:
+                        cleanup_lock.release()
             watchdog_gate = threading.Lock()
             watchdog_armed = True
             def terminate_owned_tree():
@@ -457,70 +664,72 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                 try: cleanup_owned()
                 except Exception: pass  # Timeout always fails; finally retries bounded cleanup.
             watchdog = threading.Timer(timeout, terminate_owned_tree)
+            owned_tools.watchdogs.append(watchdog)
             watchdog.daemon = True; watchdog.start()
             try:
                 diagnostic_phase('debugger')
                 with sync_playwright() as playwright:
-                    from playwright.sync_api import Error as PlaywrightError
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['debugger'], InstalledRecoveryDebuggerTimeout, cleanup=cleanup_owned) as deadline:
-                        browser = None
-                        while browser is None:
-                            require_owned_process(process)
-                            if time.monotonic() >= deadline:
-                                raise InstalledRecoveryDebuggerTimeout('Owned loopback debugger was not observed before deadline')
-                            try:
-                                browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:' + str(debug_port),
-                                    timeout=max(1, min(1000, (deadline - time.monotonic()) * 1000)))
-                            except PlaywrightError:
+                    try:
+                        owned_tools.bind_driver(playwright)
+                        from playwright.sync_api import Error as PlaywrightError
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['debugger'], InstalledRecoveryDebuggerTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            browser = None
+                            while browser is None:
                                 require_owned_process(process)
-                                time.sleep(min(.1, max(0, deadline - time.monotonic())))
-                    diagnostic_phase('renderer')
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['renderer'], InstalledRecoveryRendererTimeout, cleanup=cleanup_owned) as deadline:
-                        page = wait_installed_renderer(browser, executable.parent, process, deadline)
-                    diagnostic_phase('preload')
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['preload'], InstalledRecoveryPreloadTimeout, cleanup=cleanup_owned) as deadline:
-                        renderer_url = wait_installed_preload(browser, executable.parent, process, page, deadline)
-                    def api(path, body=None):
-                        require_owned_process(process)
-                        require(exact_renderer(browser, executable.parent, check_preload=False) is page,
-                            'Packaged main renderer changed before API request')
-                        value = page.evaluate("""async ({url,path,body}) => {
-                            if (location.href.split('#', 1)[0] !== url || typeof window.collectorCore?.request !== 'function')
-                                throw new Error('Packaged main renderer/preload changed');
-                            try { return {ok:true,transport:'desktop-ipc',body:await window.collectorCore.request(path,body===null?{}:{method:'POST',body})}; }
-                            catch(error) { const text=String(error);const match=text.match(/(?:请求失败[:：]\\s*|status[^0-9]*)([45][0-9]{2})/);return {ok:false,transport:'desktop-ipc',status:match?Number(match[1]):null,error:text}; }
-                        }""", {'url': renderer_url, 'path': path, 'body': body})
-                        require_owned_process(process)
-                        return value
-                    diagnostic_phase('readiness')
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['readiness'], InstalledRecoveryReadinessTimeout, cleanup=cleanup_owned) as deadline:
-                        while True:
-                            if time.monotonic() >= deadline:
-                                raise InstalledRecoveryReadinessTimeout('Trusted renderer API session guard was not observed before deadline')
-                            response = api('/api/studio/snapshot')
-                            if response.get('ok') is False and 'Missing application session token' in str(response.get('error', '')):
-                                break
-                            dispatch_browser_events(browser, deadline)
-                        runtime = installed_core_process(process.pid, core_executable)
-                        ready_perf_ns = time.perf_counter_ns()
-                    diagnostic_phase('api')
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['api'], InstalledRecoveryApiTimeout, cleanup=cleanup_owned) as deadline:
-                        result = exercise(api, data, manifest, timeout=deadline - time.monotonic())
-                    # Browser.close reaches Electron's real before-quit path,
-                    # which drains the Core and owns its shutdown deadline.
-                    diagnostic_phase('shutdown')
-                    with installed_phase(process, end, INSTALLED_PHASE_SECONDS['shutdown'], InstalledRecoveryShutdownTimeout, cleanup=cleanup_owned) as deadline:
-                        cdp = browser.new_browser_cdp_session()
-                        try: cdp.send('Browser.close')
-                        except PlaywrightError: pass  # CDP may disconnect before replying; process/child exit still required.
-                        try: process.wait(timeout=max(.001, deadline - time.monotonic()))
-                        except subprocess.TimeoutExpired:
-                            raise InstalledRecoveryShutdownTimeout('Owned installed desktop did not shut down before deadline') from None
-                        require(process.returncode == 0, 'Installed desktop shutdown was not clean')
-                        # The desktop must have reaped its exact Core, not orphaned it.
-                        query = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'if(Get-Process -Id ' + str(runtime['pid']) + ' -ErrorAction SilentlyContinue){exit 9}'], timeout=min(10, max(.001, deadline - time.monotonic())))
-                        require(query.returncode == 0, 'Installed desktop left its Core alive')
-                    shutdown_complete = True
+                                if time.monotonic() >= deadline:
+                                    raise InstalledRecoveryDebuggerTimeout('Owned loopback debugger was not observed before deadline')
+                                try:
+                                    browser = playwright.chromium.connect_over_cdp('http://127.0.0.1:' + str(debug_port),
+                                        timeout=max(1, min(1000, (deadline - time.monotonic()) * 1000)))
+                                except PlaywrightError:
+                                    require_owned_process(process)
+                                    time.sleep(min(.1, max(0, deadline - time.monotonic())))
+                        diagnostic_phase('renderer')
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['renderer'], InstalledRecoveryRendererTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            page = wait_installed_renderer(browser, executable.parent, process, deadline)
+                        diagnostic_phase('preload')
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['preload'], InstalledRecoveryPreloadTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            renderer_url = wait_installed_preload(browser, executable.parent, process, page, deadline)
+                        def api(path, body=None):
+                            require_owned_process(process)
+                            require(exact_renderer(browser, executable.parent, check_preload=False) is page,
+                                'Packaged main renderer changed before API request')
+                            value = page.evaluate("""async ({url,path,body}) => {
+                                if (location.href.split('#', 1)[0] !== url || typeof window.collectorCore?.request !== 'function')
+                                    throw new Error('Packaged main renderer/preload changed');
+                                try { return {ok:true,transport:'desktop-ipc',body:await window.collectorCore.request(path,body===null?{}:{method:'POST',body})}; }
+                                catch(error) { const text=String(error);const match=text.match(/(?:请求失败[:：]\\s*|status[^0-9]*)([45][0-9]{2})/);return {ok:false,transport:'desktop-ipc',status:match?Number(match[1]):null,error:text}; }
+                            }""", {'url': renderer_url, 'path': path, 'body': body})
+                            require_owned_process(process)
+                            return value
+                        diagnostic_phase('readiness')
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['readiness'], InstalledRecoveryReadinessTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            while True:
+                                if time.monotonic() >= deadline:
+                                    raise InstalledRecoveryReadinessTimeout('Trusted renderer API session guard was not observed before deadline')
+                                response = api('/api/studio/snapshot')
+                                if response.get('ok') is False and 'Missing application session token' in str(response.get('error', '')):
+                                    break
+                                dispatch_browser_events(browser, deadline)
+                            runtime = installed_core_process(process.pid, core_executable)
+                            ready_perf_ns = time.perf_counter_ns()
+                        diagnostic_phase('api')
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['api'], InstalledRecoveryApiTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            result = exercise(api, data, manifest, timeout=deadline - time.monotonic())
+                        # Browser.close reaches Electron's real before-quit path,
+                        # which drains the Core and owns its shutdown deadline.
+                        diagnostic_phase('shutdown')
+                        with installed_phase(process, end, INSTALLED_PHASE_SECONDS['shutdown'], InstalledRecoveryShutdownTimeout, cleanup=cleanup_owned, watchdogs=owned_tools.watchdogs) as deadline:
+                            request_installed_shutdown(process, debug_port, deadline, owned_tools)
+                            finish_installed_shutdown(process, runtime, playwright, deadline, owned_tools)
+                        shutdown_complete = True
+                    except BaseException:
+                        diagnostic_phase('failure-cleanup')
+                        # Interrupt driver unwind before the context manager exits;
+                        # preserve the original failure and retry cleanup below.
+                        try: owned_tools.abort()
+                        except Exception: pass
+                        raise
             except Exception:
                 failed = True
                 if timed_out.is_set():
@@ -534,6 +743,7 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                 if watchdog.is_alive() or time.monotonic() >= end:
                     timed_out.set()
                 if not shutdown_complete or timed_out.is_set():
+                    diagnostic_phase('failure-cleanup')
                     if runtime is None:
                         try: runtime = installed_core_process(process.pid, core_executable)
                         except Exception: pass
@@ -541,6 +751,8 @@ def probe_installed(executable, core_executable, core_report, log_path, *, timeo
                     except Exception:
                         if not failed and not timed_out.is_set():
                             raise
+                if not any(timer.is_alive() for timer in owned_tools.watchdogs):
+                    owned_tools.release()
         if timed_out.is_set():
             raise InstalledRecoveryTimeout('Installed recovery process deadline expired')
         diagnostic_phase('validation')

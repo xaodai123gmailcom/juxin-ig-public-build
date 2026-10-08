@@ -286,14 +286,17 @@ class PublicContracts(unittest.TestCase):
             ci.early()
             self.assertEqual(calls[:6],expected)
             self.assertEqual(calls[6][0],'early-python-dependencies')
-            self.assertEqual(calls[7],('early-service-startup-regressions',
+            self.assertEqual(calls[7],('early-installed-recovery-real-driver',
+                [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
+                 'scripts/tests/test_installed_recovery_shutdown_r64.py','--real-driver','-v'],120))
+            self.assertEqual(calls[8],('early-service-startup-regressions',
                 [str(root/'.venv/Scripts/python.exe'),'-I','-X','utf8',
                  'scripts/run_backend_tests.py','-p','test_frozen_service_r94.py',
                  '--case-timeout','180','-v'],600))
-            self.assertEqual([call[0] for call in calls[8:11]],[
+            self.assertEqual([call[0] for call in calls[9:12]],[
                 'early-pipeline-read-ownership', 'early-durable-cancellation-barrier',
                 'unicode-source-runtime'])
-            startup_calls=calls[:8]
+            startup_calls=calls[:9]
             calls.clear();failure=RuntimeError('mock real startup regression')
             def fail_startup(*args):
                 calls.append(args)

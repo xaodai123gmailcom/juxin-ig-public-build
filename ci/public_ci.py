@@ -46,6 +46,8 @@ def contracts():
               str(ROOT / 'scripts/tests/test_owned_process_wait_diagnostics.py'), '-v'], 180)
     run_owned('contract-installed-recovery-wait', [sys.executable, '-I', '-B', '-X', 'utf8',
               str(ROOT / 'scripts/tests/test_installed_recovery_profile_environment_r64.py'), '-v'], 180)
+    run_owned('contract-installed-recovery-shutdown', [sys.executable, '-I', '-B', '-X', 'utf8',
+              str(ROOT / 'scripts/tests/test_installed_recovery_shutdown_r64.py'), '-v'], 180)
     for name in ('test-r63-native-proof.py', 'test-r63-upgrade-proof.py',
                  'test-r64-recovery-ui-proof.py', 'test_public_ci.py',
                  'test_public_ci_runtime.py', 'test_public_ci_unicode.py', 'test_public_build_contract.py',
@@ -70,6 +72,8 @@ def early():
                   'NativeWindowsOwnership.test_parent_exit_and_inherited_output_descendant_cleanup', '-v'], 60)
     run_owned('early-python-dependencies', [python, '-I', '-X', 'utf8', 'scripts/install_python_dependencies.py',
                '--project-root', str(ROOT)], 1800)
+    run_owned('early-installed-recovery-real-driver', [python, '-I', '-X', 'utf8',
+              'scripts/tests/test_installed_recovery_shutdown_r64.py', '--real-driver', '-v'], 120)
     # Catch real source-process startup and upgrade regressions before the long
     # native build; the full source, frozen and installed gates remain mandatory.
     run_owned('early-service-startup-regressions', [python, '-I', '-X', 'utf8',

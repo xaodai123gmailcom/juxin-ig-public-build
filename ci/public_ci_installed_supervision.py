@@ -23,7 +23,9 @@ ADAPTER_STAGES = {'supervisor-start', 'supervisor-wait', 'progress-log-open', 'p
 LAUNCH_STAGES = {'unknown', 'not-started', 'job-setup', 'log-open', 'target-setup', 'target-create',
                  'target-membership', 'target-resume', 'launched'}
 VERIFIER_PHASES = {'started', 'source-binding', 'import-setup', 'seed', 'launch', 'debugger',
-                   'renderer', 'preload', 'readiness', 'api', 'shutdown', 'validation', 'complete'}
+                   'renderer', 'preload', 'readiness', 'api', 'shutdown', 'shutdown-endpoint',
+                   'shutdown-request', 'shutdown-desktop', 'shutdown-core', 'shutdown-driver',
+                   'shutdown-complete', 'failure-cleanup', 'temporary-cleanup', 'temporary-cleanup-returned', 'validation', 'complete'}
 
 
 def identifier(value):
