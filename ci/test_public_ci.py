@@ -919,6 +919,325 @@ class PublicContracts(unittest.TestCase):
                     self.assertNotIn(secret,json.dumps(value))
 
 
+class RetainedInstalledEvidenceValidation(unittest.TestCase):
+    """Real validator statements and filesystem IO; synthetic, not Windows acceptance.
+
+    Native cleanup/UI/API oracles have independent suites. Only those boundaries
+    and the Windows run-state provider are controlled spies in the tail tests.
+    """
+    SEED_JSON = 'final-seed-fixtures/final-seed-browser-r62.json'
+    SEED_PNG = 'final-seed-fixtures/final-seed-browser-r62.png'
+    RECEIPTS = (
+        ('nurture_cleanup_native', 'r63-nurture-cleanup-native.json'),
+        ('recovery_ui_native', 'r64-recovery-ui-native-proof.json'),
+        ('final_seed_browser', SEED_JSON),
+    )
+    # A tiny offline image, never a native application capture.
+    PNG = bytes.fromhex('89504e470d0a1a0a0000000d4948445200000001000000010804000000'
+                        'b51c0c020000000b4944415478da6364f80f00010501012718e366'
+                        '0000000049454e44ae426082')
+
+    @classmethod
+    def setUpClass(cls):
+        cls.validator_path = HERE / 'public_ci_validate_installed.py'
+        tree = ast.parse(cls.validator_path.read_text())
+        start = next(i for i, node in enumerate(tree.body)
+            if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
+                and target.id == 'early_root' for target in node.targets))
+        stop = next(i for i in range(start, len(tree.body)) if isinstance(tree.body[i], ast.If))
+        cls.retained_nodes = tree.body[start:stop]
+        cls.retained_code = compile(ast.Module(body=cls.retained_nodes, type_ignores=[]),
+                                    str(cls.validator_path), 'exec')
+        cls.tail_code = compile(ast.Module(body=tree.body[start:], type_ignores=[]),
+                                str(cls.validator_path), 'exec')
+        cls.patterns = ci.runpy.run_path(str(HERE / 'public_ci_groups.py'))['PATTERNS']
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / 'source'
+        self.output = self.source / 'installer-output'
+        self.state_dir = self.root / 'synthetic-state'
+        self.early_root = self.state_dir / 'early'
+        self.source.mkdir()
+        (self.source / 'SOURCE_SHA256.json').write_bytes(b'{"synthetic_fixture_only":true}\n')
+        self.source_identity = identity()
+        self.source_identity['source_manifest_sha256'] = common.digest(self.source / 'SOURCE_SHA256.json')
+        self.state = {'run': {'synthetic_fixture_only': True}, 'source_provenance': self.source_identity}
+        def bound(kind):
+            return dict(verified=True, synthetic_fixture_only=kind,
+                source_commit=self.source_identity['source_commit'],
+                github_sha=self.source_identity['source_commit'],
+                source_provenance=copy.deepcopy(self.source_identity))
+        self.source_proof = bound('source')
+        self.cleanup = bound('cleanup-native-spy')
+        self.recovery_ui = bound('recovery-ui-spy')
+        self.seed = dict(verified=True, synthetic_offline=True, source_preserved=True,
+            all_owned_children_closed=True, live_accounts_tested=False, external_requests=0,
+            retired_children=3, replacement_children=3, browser_version='synthetic-browser')
+        self.early = dict(verified=True, synthetic_offline=True,
+            source_commit=self.source_identity['source_commit'],
+            source_manifest_sha256=self.source_identity['source_manifest_sha256'],
+            source_provenance=copy.deepcopy(self.source_identity), run=copy.deepcopy(self.state['run']),
+            groups=list(self.patterns), native_fixtures=['desktop/tests/nurture-cleanup-native-r63.cjs',
+                'desktop/tests/nurture-reels-r6.integration.cjs', 'desktop/tests/recovery-ui-native-r64.cjs'],
+            nurture_cleanup_native=copy.deepcopy(self.cleanup), recovery_ui_native=copy.deepcopy(self.recovery_ui),
+            final_seed_browser=copy.deepcopy(self.seed))
+        self.recovery_api = dict(verified=True, synthetic_fixture_only=True, core_upgrade_manifest_sha256='c'*64)
+        self.installed = dict(installed_root=str(self.root / 'synthetic-installation'),
+            recovery_api=copy.deepcopy(self.recovery_api), nurture_cleanup_upgrade={'manifest_sha256': 'c'*64})
+        self.upgrade_core = Path(self.installed['installed_root']) / 'resources/backend/collector_core/collector_core.exe'
+        self.write_json(self.source / 'package.json', {'build': {'productName': 'SyntheticProduct'}})
+        self.write_current()
+        self.write_retained()
+
+    def write_json(self, path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value, sort_keys=True), encoding='utf-8')
+
+    def write_current(self):
+        for name, value in ((self.SEED_JSON, self.seed), ('r63-nurture-cleanup-native.json', self.cleanup),
+                           ('r64-recovery-ui-native-proof.json', self.recovery_ui),
+                           ('installed-recovery-r64.json', self.recovery_api)):
+            self.write_json(self.output / name, value)
+        for name in (self.SEED_PNG, *common.FINAL_IMAGES):
+            (self.output / name).write_bytes(self.PNG)
+
+    def write_retained(self, early=None, overrides=None):
+        documents = {'r64-early-verification.json': self.early if early is None else early,
+                     **{name: self.early[field] for field, name in self.RECEIPTS}}
+        documents.update(overrides or {})
+        for name in common.EARLY_FILES:
+            path = self.early_root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            value = documents.get(name, self.PNG)
+            if isinstance(value, bytes):
+                path.write_bytes(value)
+            else:
+                self.write_json(path, value)
+        self.write_json(self.state_dir / 'early-result.json', {
+            'hashes': {name: common.digest(self.early_root / name) for name in common.EARLY_FILES}})
+
+    def scope(self, fail_call=None):
+        calls, loads = [], []
+        def validate(label, *args, **kwargs):
+            calls.append((label, args, kwargs))
+            if len(calls) == fail_call:
+                raise RuntimeError('synthetic independent validator rejection')
+            return args[0]
+        def run_path(path):
+            relative = Path(path).relative_to(self.source).as_posix()
+            loads.append(relative)
+            if relative == 'ci/public_ci_groups.py':
+                return {'PATTERNS': list(self.patterns)}
+            oracles = {'ci/r63_native_proof.py': ('validate_native', 'cleanup'),
+                       'ci/r64_recovery_ui_proof.py': ('validate_recovery_ui', 'recovery-ui'),
+                       'scripts/verify_installed_recovery_r64.py': ('validate_proof', 'recovery-api')}
+            self.assertIn(relative, oracles, 'Unexpected validator boundary must not be silently mocked')
+            function, label = oracles[relative]
+            return {function: lambda *args, **kwargs: validate(label, *args, **kwargs)}
+        return dict(root=self.root, ROOT=self.source, output=self.output, Path=Path, json=json, hashlib=hashlib,
+            os=SimpleNamespace(environ={'GITHUB_SHA': self.source_identity['source_commit']}),
+            state_root=lambda: self.state_dir, EARLY_FILES=common.EARLY_FILES,
+            proof_digest=common.digest, read_json=common.read_json, require=common.require,
+            same_json=common.same_json, bind_native=common.bind_native,
+            identity=copy.deepcopy(self.source_identity), state=copy.deepcopy(self.state),
+            source_proof=copy.deepcopy(self.source_proof), installed=copy.deepcopy(self.installed),
+            upgrade_core=self.upgrade_core, runpy=SimpleNamespace(run_path=run_path),
+            verify_run_state=Mock(return_value=copy.deepcopy(self.state)), print=Mock(),
+            validator_calls=calls, validator_loads=loads)
+
+    def reject(self, message, *, retained_only=False, scope=None, error=RuntimeError):
+        scope = self.scope() if scope is None else scope
+        with self.assertRaisesRegex(error, message):
+            exec(self.retained_code if retained_only else self.tail_code, scope)
+        scope['print'].assert_not_called()
+
+    def test_real_retained_block_accepts_exact_files_and_full_png_path(self):
+        self.assertEqual({p.relative_to(self.early_root).as_posix()
+                          for p in self.early_root.rglob('*') if p.is_file()}, set(common.EARLY_FILES))
+        scope = self.scope()
+        exec(self.retained_code, scope)
+        self.assertEqual(scope['early_seed'], self.seed)
+        self.assertEqual(scope['name'], self.SEED_PNG)
+        self.assertEqual(scope['validator_calls'], [])
+        scope['verify_run_state'].assert_not_called()
+
+    def test_missing_singleton_comma_mutation_reproduces_early_f_failure(self):
+        nodes = copy.deepcopy(self.retained_nodes)
+        loop = next(node for node in nodes if isinstance(node, ast.For)
+                    and ast.literal_eval(node.iter) == (self.SEED_PNG,))
+        loop.iter = ast.copy_location(ast.Constant(value=self.SEED_PNG), loop.iter)
+        code = compile(ast.Module(body=nodes, type_ignores=[]), '<synthetic missing-comma mutation>', 'exec')
+        with self.assertRaises(FileNotFoundError) as caught:
+            exec(code, self.scope())
+        self.assertEqual(Path(caught.exception.filename), self.early_root / 'f')
+
+    def test_each_missing_or_changed_retained_file_is_rejected(self):
+        for name in common.EARLY_FILES:
+            with self.subTest(name=name, mutation='missing'):
+                self.write_retained()
+                (self.early_root / name).unlink()
+                self.reject('', retained_only=True, error=FileNotFoundError)
+            with self.subTest(name=name, mutation='changed-bytes'):
+                self.write_retained()
+                path = self.early_root / name
+                path.write_bytes(path.read_bytes() + b'\n')
+                self.reject('Retained early raw evidence changed', retained_only=True)
+
+    def test_missing_extra_or_changed_recorded_hashes_are_rejected(self):
+        for name in (*common.EARLY_FILES, 'unexpected.json', 'changed-sha256'):
+            with self.subTest(name=name):
+                self.write_retained()
+                path = self.state_dir / 'early-result.json'
+                receipt = common.read_json(path)
+                if name in common.EARLY_FILES:
+                    receipt['hashes'].pop(name)
+                elif name == 'changed-sha256':
+                    receipt['hashes'][self.SEED_PNG] = '0'*64
+                else:
+                    receipt['hashes'][name] = '0'*64
+                self.write_json(path, receipt)
+                self.reject('Retained early raw evidence changed', retained_only=True)
+
+    def test_retained_png_signature_is_checked_even_with_refreshed_hash(self):
+        self.write_retained(overrides={self.SEED_PNG: b'not-a-png'})
+        self.reject('Retained early native capture is invalid', retained_only=True)
+
+    def test_each_aggregate_and_standalone_receipt_pair_is_type_strict(self):
+        for field, name in self.RECEIPTS:
+            for side in ('aggregate', 'standalone'):
+                with self.subTest(field=field, side=side):
+                    early = copy.deepcopy(self.early)
+                    standalone = copy.deepcopy(early[field])
+                    (early[field] if side == 'aggregate' else standalone)['verified'] = 1
+                    self.write_retained(early, {name: standalone})
+                    self.reject('Retained early standalone and aggregate receipts differ', retained_only=True)
+
+    def test_each_retained_and_current_seed_invariant_is_required(self):
+        invalid = {'verified': 1, 'synthetic_offline': 1, 'source_preserved': 1,
+                   'all_owned_children_closed': 1, 'live_accounts_tested': 0,
+                   'external_requests': 1, 'retired_children': 2, 'replacement_children': 2,
+                   'browser_version': ''}
+        for target in ('retained', 'current'):
+            for key, value in invalid.items():
+                for missing in (False, True):
+                    with self.subTest(target=target, key=key, missing=missing):
+                        self.write_retained()
+                        self.write_current()
+                        seed = copy.deepcopy(self.seed)
+                        if missing:
+                            seed.pop(key)
+                        else:
+                            seed[key] = value
+                        if target == 'retained':
+                            early = copy.deepcopy(self.early)
+                            early['final_seed_browser'] = seed
+                            self.write_retained(early, {self.SEED_JSON: seed})
+                        else:
+                            self.write_json(self.output / self.SEED_JSON, seed)
+                        self.reject('final-source browser proof is incomplete|native final-source proof is missing or invalid')
+
+    def test_synthetic_tail_reaches_pass_and_calls_every_independent_validator_exactly(self):
+        scope = self.scope()
+        exec(self.tail_code, scope)
+        commit = self.source_identity['source_commit']
+        self.assertEqual(scope['validator_calls'], [
+            ('cleanup', (self.cleanup, self.source, commit), {}),
+            ('cleanup', (self.cleanup, self.source, commit, self.early_root), {}),
+            ('recovery-ui', (self.recovery_ui, self.source, commit, self.output), {}),
+            ('recovery-ui', (self.recovery_ui, self.source, commit, self.early_root), {}),
+            ('recovery-api', (self.recovery_api,), {
+                'executable': Path(self.installed['installed_root']) / 'SyntheticProduct.exe',
+                'core_executable': self.upgrade_core}),
+        ])
+        self.assertEqual(scope['validator_loads'], ['ci/r63_native_proof.py', 'ci/r64_recovery_ui_proof.py',
+            'scripts/verify_installed_recovery_r64.py', 'ci/public_ci_groups.py'])
+        scope['verify_run_state'].assert_called_once_with()
+        scope['print'].assert_called_once_with('PUBLIC_INSTALLED_ACCEPTANCE=PASS')
+
+    def test_tail_propagates_each_independent_validator_and_final_run_rejection(self):
+        for index in range(1, 6):
+            with self.subTest(call=index):
+                scope = self.scope(fail_call=index)
+                self.reject('synthetic independent validator rejection', scope=scope)
+                self.assertEqual(len(scope['validator_calls']), index)
+                scope['verify_run_state'].assert_not_called()
+        scope = self.scope()
+        scope['verify_run_state'].side_effect = RuntimeError('synthetic stale run')
+        self.reject('synthetic stale run', scope=scope)
+
+    def test_tail_rejects_early_flags_source_and_run_mismatches(self):
+        for key, value in (('verified', 1), ('synthetic_offline', 1), ('source_commit', 'f'*40),
+                ('source_manifest_sha256', 'f'*64), ('source_provenance', {}), ('run', {})):
+            with self.subTest(key=key):
+                early = copy.deepcopy(self.early)
+                early[key] = value
+                self.write_retained(early)
+                self.reject('Mandatory R6.3|Early evidence is from another source/run')
+
+    def test_tail_rejects_every_bound_receipt_identity_mismatch(self):
+        for target in ('source', 'cleanup', 'recovery-ui', 'early-cleanup', 'early-recovery-ui'):
+            for key, value in (('source_commit', 'f'*40), ('github_sha', 'f'*40), ('source_provenance', {})):
+                with self.subTest(target=target, key=key):
+                    self.write_retained()
+                    self.write_current()
+                    scope = self.scope()
+                    if target == 'source':
+                        scope['source_proof'][key] = value
+                    else:
+                        field, name = self.RECEIPTS[0 if target.endswith('cleanup') else 1]
+                        bad = copy.deepcopy(self.early[field])
+                        bad[key] = value
+                        if target.startswith('early-'):
+                            early = copy.deepcopy(self.early)
+                            early[field] = bad
+                            self.write_retained(early, {name: bad})
+                        else:
+                            self.write_json(self.output / name, bad)
+                    self.reject('Native receipt is not bound to the full current source', scope=scope)
+
+    def test_tail_requires_all_groups_in_exact_order_and_exact_native_fixtures(self):
+        mutations = [list(self.patterns[:i] + self.patterns[i+1:]) for i in range(len(self.patterns))]
+        mutations += [list(reversed(self.patterns)), self.patterns + ['unexpected.py']]
+        for groups in mutations:
+            with self.subTest(groups=groups):
+                early = copy.deepcopy(self.early)
+                early['groups'] = groups
+                self.write_retained(early)
+                self.reject('Mandatory R6.3|Missing required|Early backend coverage changed')
+        fixtures = self.early['native_fixtures']
+        for names in (fixtures[:-1], fixtures + [fixtures[0]], list(reversed(fixtures)), None):
+            with self.subTest(fixtures=names):
+                early = copy.deepcopy(self.early)
+                early['native_fixtures'] = names
+                self.write_retained(early)
+                self.reject('Required current-source native fixture completion')
+
+    def test_tail_rejects_each_missing_or_invalid_current_screenshot(self):
+        for name in (self.SEED_PNG, *common.FINAL_IMAGES):
+            for missing in (True, False):
+                with self.subTest(name=name, missing=missing):
+                    self.write_current()
+                    path = self.output / name
+                    if missing:
+                        path.unlink()
+                    else:
+                        path.write_bytes(b'not-a-png')
+                    self.reject('', error=(RuntimeError, FileNotFoundError))
+
+    def test_tail_rejects_recovery_aggregate_and_core_manifest_mismatches(self):
+        scope = self.scope()
+        scope['installed']['recovery_api']['verified'] = 1
+        self.reject('Actual installed R6.4 API receipt differs', scope=scope)
+        changed = dict(self.recovery_api, core_upgrade_manifest_sha256='f'*64)
+        self.write_json(self.output / 'installed-recovery-r64.json', changed)
+        scope = self.scope()
+        scope['installed']['recovery_api'] = changed
+        self.reject('Actual installed R6.4 API receipt differs', scope=scope)
+
+
 class ParentFailureDiagnostics(unittest.TestCase):
     def capture(self, source, filename, scope=None):
         try:

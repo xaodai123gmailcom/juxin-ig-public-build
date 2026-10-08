@@ -91,7 +91,7 @@ early_hashes=read_json(state_root()/'early-result.json')['hashes']
 require(set(early_hashes)==set(EARLY_FILES) and all(proof_digest(early_root/name)==early_hashes[name] for name in EARLY_FILES), 'Retained early raw evidence changed after that gate')
 for field,name in (('nurture_cleanup_native','r63-nurture-cleanup-native.json'),('recovery_ui_native','r64-recovery-ui-native-proof.json'),('final_seed_browser','final-seed-fixtures/final-seed-browser-r62.json')):
     require(same_json(early.get(field),read_json(early_root/name)), 'Retained early standalone and aggregate receipts differ')
-for name in ('final-seed-fixtures/final-seed-browser-r62.png'):
+for name in ('final-seed-fixtures/final-seed-browser-r62.png',):
     require((early_root/name).read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), 'Retained early native capture is invalid')
 early_seed=early['final_seed_browser']
 require(all(early_seed.get(key) is True for key in ('verified','synthetic_offline','source_preserved','all_owned_children_closed')) and early_seed.get('live_accounts_tested') is False and early_seed.get('external_requests')==0 and early_seed.get('retired_children')==3 and early_seed.get('replacement_children')==3 and bool(early_seed.get('browser_version')), 'Retained early final-source browser proof is incomplete')
