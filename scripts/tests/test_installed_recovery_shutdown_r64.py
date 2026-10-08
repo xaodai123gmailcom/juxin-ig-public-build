@@ -441,11 +441,21 @@ class RealDriverRegression(unittest.TestCase):
         from websockets.exceptions import InvalidStatus
         fixture = LocalCdpFixture('redirect'); owned = self.verifier.OwnedRecoveryTools()
         try:
-            with self.assertRaises(InvalidStatus):
+            with self.assertRaises((InvalidStatus, ValueError)) as rejected:
                 with self.verifier.installed_phase(Mock(), time.monotonic() + 3, 2,
                         self.verifier.InstalledRecoveryShutdownTimeout, cleanup=owned.abort) as deadline:
                     self.verifier.request_installed_shutdown(Mock(poll=Mock(return_value=None)),
                                                             fixture.port, deadline, owned)
+            refusal = rejected.exception
+            if type(refusal) is ValueError:
+                # websockets 17.1 wraps the actual 302 when the retained socket
+                # forbids following it. Reject every unrelated ValueError.
+                self.assertEqual(str(refusal), 'cannot follow redirect to ' +
+                    fixture.endpoint + '/redirected with a preexisting socket')
+                refusal = refusal.__cause__
+            self.assertIs(type(refusal), InvalidStatus)
+            self.assertEqual(refusal.response.status_code, 302)
+            self.assertEqual(refusal.response.headers['Location'], fixture.endpoint + '/redirected')
             self.assertEqual(fixture.upgrades, ['/devtools/browser/fixture'])
             self.assertFalse(fixture.close_received.is_set())
         finally: owned.abort(); owned.release(); fixture.close()

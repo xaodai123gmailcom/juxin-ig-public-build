@@ -796,7 +796,7 @@
   "scripts/tests/test_diagnose_dedupe.py": "55bd5de22f38ae18026ca5058d50cfd3edff1f0ce4bbbf87362884d3bfffb5eb",
   "scripts/tests/test_diagnose_unread_profiles.py": "6fe14d3255800c83368e4375fdcb078181a33d410c63beb2e81230b4fc6aa1c2",
   "scripts/tests/test_installed_recovery_profile_environment_r64.py": "1c3a59a19be47c335b36ce1ea8fa528eee45a2d3f524432f6c60d5b2a2880200",
-  "scripts/tests/test_installed_recovery_shutdown_r64.py": "fca6df62bcf9981ec8a190f4351025d37423c9faf273a5aafa7c6f62037c2aad",
+  "scripts/tests/test_installed_recovery_shutdown_r64.py": "83129d2301caa18b2741995ab9173ad0de61178247e9a0eff9641e1cd77b7513",
   "scripts/tests/test_native_repair_r94.py": "b361bfb853db395126409001873741464e94a400582bc20bfec2f922ca46027c",
   "scripts/tests/test_owned_process_r64.py": "8d812394ce673c888b58c3bdf291aa2db96b5835a127caa0fe2d3abbab6dd6bd",
   "scripts/tests/test_owned_process_wait_diagnostics.py": "b16c7a76bf4753e2038c15e486dcc84a3bb11c515f77212acd8b35f5be1031a2",
