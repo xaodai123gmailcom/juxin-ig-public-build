@@ -12,7 +12,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,7 +42,7 @@ class RealGitBindingTests(unittest.TestCase):
             GITHUB_REPOSITORY_ID=ci.REPOSITORY['id'], GITHUB_REPOSITORY_OWNER_ID=ci.REPOSITORY['owner_id'])
         self.stack.enter_context(patch.dict(os.environ, env, clear=True))
         files = {'package.json': encoded({'name':'fixture', 'version':'3.0.4'}),
-            'BUILD_REVISION.txt': b'Source revision: stability-r94\n',
+            'BUILD_REVISION.txt': b'Source revision: system-review-r188\n',
             '.gitattributes': b'* -text\n', 'backend/app/main.py': b'print("repaired")\n'}
         for name, data in files.items():
             self.put(self.root, name, data)
@@ -51,7 +51,7 @@ class RealGitBindingTests(unittest.TestCase):
         manifest_bytes = encoded(manifest)
         self.put(self.root, ci.MANIFEST, manifest_bytes)
         marker = {'schema':2, 'mode':ci.MODE, 'representation':ci.REPRESENTATION,
-            'repository':dict(ci.REPOSITORY), 'product_version':'3.0.4', 'source_revision':'stability-r94',
+            'repository':dict(ci.REPOSITORY), 'product_version':'3.0.4', 'source_revision':'system-review-r188',
             'source_manifest_sha256':safe._sha256(manifest_bytes)}
         self.put(self.root, ci.MARKER, encoded(marker))
         self.git('init', '--quiet')
@@ -586,6 +586,328 @@ class RealGitBindingTests(unittest.TestCase):
         self.assertFalse((self.root/'installer-output').exists())
         self.put(self.root,'backend/app/main.py',b'changed')
         with redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()): self.assertEqual(1,ci.main(['--root',str(self.root)]))
+
+
+class CacheIndependentBindingTests(unittest.TestCase):
+    """Disposable ignored caches cannot write outside or execute before binding."""
+    marker = 'DISPOSABLE_CACHED_CODE_MUST_NOT_EXECUTE'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='binding 缓存 [space]-')
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / 'source'; self.root.mkdir()
+        self.external = self.base / 'external'; self.external.mkdir()
+        self.names = ['scripts/archive_source_binding.py', 'scripts/ci_source_binding.py',
+            'scripts/source_binding_io.py', 'scripts/local_source_binding.cjs',
+            'scripts/verify_build_output_paths.py', 'package.json', 'BUILD_REVISION.txt']
+        for name in self.names:
+            target = self.root / name; target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, target)
+        manifest = encoded({name: safe._sha256((self.root / name).read_bytes()) for name in self.names})
+        (self.root / ci.MANIFEST).write_bytes(manifest)
+        marker = {'schema': 2, 'mode': ci.MODE, 'representation': ci.REPRESENTATION,
+            'repository': dict(ci.REPOSITORY), 'product_version': '3.0.4',
+            'source_revision': 'system-review-r188', 'source_manifest_sha256': safe._sha256(manifest)}
+        (self.root / ci.MARKER).write_bytes(encoded(marker))
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(('GIT_', 'GITHUB_', 'PYTHON'))}
+        self.env.update(JUXIN_LOCAL_ARCHIVE_BUILD='1', JUXIN_LOCAL_ARCHIVE_ROOT=str(self.root))
+
+    def linked(self, target, link, directory=False):
+        try:
+            link.symlink_to(target, target_is_directory=directory)
+        except NotImplementedError as error:
+            self.skipTest('Native symlink creation unavailable: ' + str(error))
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows symlink privilege unavailable: ' + str(error))
+            raise
+
+    def cache(self, style, valid):
+        # Node's supported adapter may select a different Python than this test.
+        # Manufacture each interpreter's valid cache tag; never assume -B stops reads.
+        node_python = shutil.which('python' if os.name == 'nt' else 'python3')
+        self.assertIsNotNone(node_python)
+        interpreters = dict.fromkeys((sys.executable, node_python))
+        cache = self.root / 'scripts/__pycache__'
+        if style == 'directory':
+            self.linked(self.external, cache, True)
+        else:
+            cache.mkdir()
+        maker = """import base64, importlib.util, importlib._bootstrap_external as b, json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+code = compile('raise RuntimeError(' + repr(sys.argv[2]) + ')', str(p), 'exec')
+print(json.dumps([pathlib.Path(importlib.util.cache_from_source(str(p))).name,
+    base64.b64encode(b._code_to_timestamp_pyc(code, int(p.stat().st_mtime), p.stat().st_size)).decode()]))
+"""
+        import base64
+        entries = {}
+        for name in ('ci_source_binding', 'source_binding_io'):
+            source = self.root / 'scripts' / (name + '.py')
+            for interpreter in interpreters:
+                filename, payload = json.loads(subprocess.check_output(
+                    [interpreter, '-I', '-B', '-c', maker, str(source), self.marker], text=True, timeout=30))
+                entries[filename] = base64.b64decode(payload) if valid else b'disposable invalid cache sentinel\n'
+        for filename, payload in entries.items():
+            destination = cache / filename
+            target = self.external / filename
+            if style == 'directory':
+                destination.write_bytes(payload)
+            elif style == 'leaf':
+                target.write_bytes(payload); self.linked(target, destination)
+            else:
+                destination.write_bytes(payload)
+        self.cache_link = os.readlink(cache) if cache.is_symlink() else None
+        return {str(p.relative_to(self.base)): (safe._sha256(p.read_bytes()),
+                    os.readlink(p) if p.is_symlink() else None)
+            for parent in (cache, self.external) for p in parent.iterdir() if p.is_file()}
+
+    @staticmethod
+    def remove_cache_entry(path):
+        """Remove a test-owned entry without walking a redirected target."""
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode):
+            path.unlink()
+        elif getattr(info, 'st_file_attributes', 0) & 0x400:
+            path.rmdir()
+        elif stat.S_ISDIR(info.st_mode):
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    @contextmanager
+    def cache_case(self, style, valid):
+        # subTest catches SkipTest and assertion failures, then advances to the
+        # next case. Cleanup must therefore wrap setup too: a denied leaf link
+        # can leave __pycache__ and a partial external payload before cache()
+        # returns. Do not mask residue with mkdir(exist_ok=True).
+        cache = self.root / 'scripts/__pycache__'
+        try:
+            self.assertFalse(os.path.lexists(cache), 'cache fixture must start absent')
+            self.assertEqual([], list(self.external.iterdir()), 'external fixture must start empty')
+            yield self.cache(style, valid)
+        finally:
+            self.remove_cache_entry(cache)
+            for path in self.external.iterdir():
+                self.remove_cache_entry(path)
+
+    def unchanged(self, before):
+        cache = self.root / 'scripts/__pycache__'
+        self.assertEqual(self.cache_link, os.readlink(cache) if cache.is_symlink() else None)
+        for name, (digest, link) in before.items():
+            path = self.base / name
+            self.assertEqual(digest, safe._sha256(path.read_bytes()), name)
+            self.assertEqual(link, os.readlink(path) if path.is_symlink() else None, name)
+        # No new cache is permitted, including on a verification failure.
+        actual = {str(p.relative_to(self.base)) for parent in
+            (self.root / 'scripts/__pycache__', self.external) for p in parent.iterdir() if p.is_file()}
+        self.assertEqual(set(before), actual)
+
+    def run_cli(self, mode):
+        if mode == 'archive':
+            command = [sys.executable, '-I', str(self.root / 'scripts/archive_source_binding.py'), '--root', str(self.root)]
+        elif mode == 'ci':
+            command = [sys.executable, '-I', str(self.root / 'scripts/ci_source_binding.py'), '--root', str(self.root)]
+        elif mode == 'output':
+            command = [sys.executable, '-I', str(self.root / 'scripts/verify_build_output_paths.py'), '--project-root', str(self.root)]
+        else:
+            self.assertIsNotNone(shutil.which('node'), 'Node is required by the supported build contracts')
+            command = ['node', '-e', 'const b=require(process.argv[1]); console.log(JSON.stringify(b.collectSourceIdentity(process.argv[2])))',
+                str(self.root / 'scripts/local_source_binding.cjs'), str(self.root)]
+        env = dict(self.env)
+        if mode in {'ci', 'node-ci'}:
+            env.update(GITHUB_ACTIONS='true', GITHUB_SHA='a' * 40,
+                GITHUB_REPOSITORY=ci.REPOSITORY['full_name'], GITHUB_REPOSITORY_ID=ci.REPOSITORY['id'],
+                GITHUB_REPOSITORY_OWNER_ID=ci.REPOSITORY['owner_id'])
+        result = subprocess.run(command, cwd=self.root, env=env, capture_output=True, text=True, timeout=30)
+        self.assertNotIn(self.marker, result.stdout + result.stderr)
+        return result
+
+    def test_direct_binding_and_guard_ignore_valid_cached_code(self):
+        for mode in ('archive', 'ci', 'output'):
+            with self.subTest(mode=mode), self.cache_case('ordinary', True) as before:
+                result = self.run_cli(mode)
+                self.assertEqual(1 if mode == 'ci' else 0, result.returncode, result.stderr)
+                self.unchanged(before)
+
+    def test_direct_binding_and_guard_do_not_write_invalid_caches(self):
+        for mode in ('archive', 'ci', 'output'):
+            with self.subTest(mode=mode), self.cache_case('ordinary', False) as before:
+                result = self.run_cli(mode)
+                self.assertEqual(1 if mode == 'ci' else 0, result.returncode, result.stderr)
+                self.unchanged(before)
+
+    def test_redirected_cache_directory_is_not_executed_or_written(self):
+        for valid in (False, True):
+            for mode in ('archive', 'ci', 'output', 'node-archive', 'node-ci'):
+                with self.subTest(mode=mode, valid=valid), self.cache_case('directory', valid) as before:
+                    result = self.run_cli(mode)
+                    self.assertEqual(0 if mode == 'output' else 1, result.returncode, result.stderr)
+                    self.unchanged(before)
+
+    def test_redirected_cache_leaf_is_not_executed_or_written(self):
+        for valid in (False, True):
+            for mode in ('archive', 'ci', 'output', 'node-archive', 'node-ci'):
+                with self.subTest(mode=mode, valid=valid), self.cache_case('leaf', valid) as before:
+                    result = self.run_cli(mode)
+                    self.assertEqual(1 if mode in {'ci', 'node-ci'} else 0, result.returncode, result.stderr)
+                    self.unchanged(before)
+    
+    def test_existing_ci_callers_load_binding_source_instead_of_cache(self):
+        spec = importlib.util.spec_from_file_location('cache_probe_common', ROOT / 'ci/public_ci_common.py')
+        common = importlib.util.module_from_spec(spec); spec.loader.exec_module(common)
+        with self.cache_case('directory', True) as before, patch.object(common, 'ROOT', self.root), patch.object(probe, '__file__', str(self.root / 'scripts/verify_installed_recovery_r64.py')):
+            for module in (common.load_source_module('ci_source_binding'), probe.load_sibling('ci_source_binding')):
+                self.assertEqual(ci.MODE, module.MODE)
+                self.assertEqual(ci.REPOSITORY, module.REPOSITORY)
+            self.unchanged(before)
+
+    def test_denied_leaf_link_skips_each_case_without_later_mkdir_errors(self):
+        denied = OSError('injected Windows symbolic-link privilege denial')
+        denied.winerror = 1314
+        case = CacheIndependentBindingTests('test_redirected_cache_leaf_is_not_executed_or_written')
+        result = unittest.TestResult()
+        with patch.object(Path, 'symlink_to', side_effect=denied), \
+                patch.object(CacheIndependentBindingTests, 'run_cli') as run:
+            case.run(result)
+        self.assertEqual([], result.errors)
+        self.assertEqual([], result.failures)
+        self.assertEqual(10, len(result.skipped))
+        self.assertTrue(all('privilege unavailable' in reason for _, reason in result.skipped))
+        run.assert_not_called()
+
+    def test_partial_leaf_setup_skip_cleans_created_entries_before_next_case(self):
+        calls = []
+        def partial_setup(case, target, link, directory=False):
+            calls.append(link)
+            if len(calls) % 2:
+                # Partial fixture data needs cleanup even on hosts without link
+                # privileges; real redirect cleanup is covered separately.
+                link.write_bytes(b'partial fixture entry')
+            else:
+                raise unittest.SkipTest('injected skip after partial setup')
+        case = CacheIndependentBindingTests('test_redirected_cache_leaf_is_not_executed_or_written')
+        result = unittest.TestResult()
+        with patch.object(CacheIndependentBindingTests, 'linked', partial_setup), \
+                patch.object(CacheIndependentBindingTests, 'run_cli') as run:
+            case.run(result)
+        self.assertEqual([], result.errors)
+        self.assertEqual([], result.failures)
+        self.assertEqual(10, len(result.skipped))
+        self.assertEqual(20, len(calls))
+        run.assert_not_called()
+
+    def test_failed_cache_assertion_does_not_contaminate_next_subtest(self):
+        case = CacheIndependentBindingTests('test_direct_binding_and_guard_ignore_valid_cached_code')
+        result = unittest.TestResult()
+        with patch.object(CacheIndependentBindingTests, 'run_cli',
+                          return_value=SimpleNamespace(returncode=99, stderr='injected failure')) as run:
+            case.run(result)
+        self.assertEqual([], result.errors)
+        self.assertEqual([], result.skipped)
+        self.assertEqual(3, len(result.failures))
+        self.assertEqual(3, run.call_count)
+        self.assertTrue(all('injected failure' in text for _, text in result.failures))
+
+    def test_cache_cleanup_does_not_follow_directory_reparse_target(self):
+        entry = self.root / 'junction-fixture'
+        with patch.object(Path, 'lstat', return_value=SimpleNamespace(
+                st_mode=stat.S_IFDIR, st_file_attributes=0x400)), \
+                patch.object(Path, 'rmdir') as remove, \
+                patch.object(Path, 'unlink') as unlink, \
+                patch.object(shutil, 'rmtree') as walk:
+            self.remove_cache_entry(entry)
+        remove.assert_called_once_with()
+        unlink.assert_not_called(); walk.assert_not_called()
+
+    def test_both_node_dispatches_explicitly_disable_bytecode_writes(self):
+        source = (ROOT / 'scripts/local_source_binding.cjs').read_text()
+        self.assertEqual(2, source.count("['-I','-B','-X','utf8'"))
+        self.assertNotIn("['-I','-X','utf8'", source)
+
+    def test_diagnostic_handlers_keep_the_guard_exception_identity(self):
+        for name in ('diagnose_dedupe', 'diagnose_native_startup'):
+            module = load(name)
+            self.assertIs(module.SourceBindingError,
+                module.verify_build_outputs.__globals__['safe'].SourceBindingError)
+
+    def test_direct_orchestration_entrypoints_ignore_cached_helpers(self):
+        import importlib._bootstrap_external as bootstrap
+        cases = {
+            'scripts/diagnose_dedupe.py': ('scripts/verify_build_output_paths.py', 'scripts/source_binding_io.py'),
+            'scripts/diagnose_native_startup.py': ('scripts/verify_build_output_paths.py', 'scripts/source_binding_io.py'),
+            'ci/public_ci.py': ('ci/public_ci_common.py', 'ci/public_ci_runtime.py'),
+            'ci/public_ci_unicode.py': ('ci/public_ci_common.py',),
+            'ci/public_ci_early.py': ('ci/public_ci_common.py',),
+            'ci/public_ci_validate_installed.py': ('ci/public_ci_common.py',),
+        }
+        for entry, helpers in cases.items():
+            for valid in (False, True):
+                for redirected in (False, True):
+                    with self.subTest(entry=entry, valid=valid, redirected=redirected):
+                        area = self.base / (Path(entry).stem + str(valid) + str(redirected)); area.mkdir()
+                        outside = area / 'external'; outside.mkdir()
+                        root = area / 'source'; root.mkdir()
+                        for name in (entry, *helpers):
+                            target = root / name; target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(ROOT / name, target)
+                        cache = (root / entry).parent / '__pycache__'
+                        if redirected:
+                            self.linked(outside, cache, True)
+                        else:
+                            cache.mkdir()
+                        for name in helpers:
+                            source = root / name
+                            payload = b'disposable outer invalid cache sentinel\n'
+                            if valid:
+                                code = compile('raise RuntimeError(' + repr(self.marker) + ')', str(source), 'exec')
+                                payload = bootstrap._code_to_timestamp_pyc(code, int(source.stat().st_mtime), source.stat().st_size)
+                            Path(importlib.util.cache_from_source(str(source))).write_bytes(payload)
+                        before = {str(p.relative_to(area)): safe._sha256(p.read_bytes()) for p in area.rglob('*') if p.is_file()}
+                        result = subprocess.run([sys.executable, '-I', str(root / entry), '--help'],
+                            cwd=root, env=self.env, capture_output=True, text=True, timeout=30)
+                        self.assertNotIn(self.marker, result.stdout + result.stderr)
+                        if entry in {'ci/public_ci_early.py', 'ci/public_ci_validate_installed.py'}:
+                            # These existing scripts have no help mode; fail on absent
+                            # real run authority before any output/consent mutation.
+                            self.assertNotEqual(0, result.returncode)
+                            self.assertIn('Actual standard hosted Windows Actions execution is required', result.stderr)
+                        else:
+                            self.assertEqual(0, result.returncode, result.stderr)
+                            self.assertIn('usage:', result.stdout)
+                        if entry in {'ci/public_ci_early.py', 'ci/public_ci_validate_installed.py'}:
+                            runpy_result = subprocess.run([sys.executable, '-I', '-c',
+                                'import runpy,sys; runpy.run_path(sys.argv[1])', str(root / entry)],
+                                cwd=root, env=self.env, capture_output=True, text=True, timeout=30)
+                            self.assertNotEqual(0, runpy_result.returncode)
+                            self.assertNotIn(self.marker, runpy_result.stdout + runpy_result.stderr)
+                            self.assertIn('Actual standard hosted Windows Actions execution is required', runpy_result.stderr)
+                        after = {str(p.relative_to(area)): safe._sha256(p.read_bytes()) for p in area.rglob('*') if p.is_file()}
+                        self.assertEqual(before, after, 'Entry must not create caches or alter outside sentinels')
+                        self.assertEqual(redirected, cache.is_symlink())
+                        if redirected: self.assertEqual(str(outside), os.readlink(cache))
+
+    def test_orchestration_runpy_entries_have_the_same_cache_boundary(self):
+        # Public CI calls the installed validator using runpy's default name.
+        for name in ('ci/public_ci.py', 'ci/public_ci_early.py', 'ci/public_ci_validate_installed.py',
+                     'ci/public_ci_unicode.py', 'scripts/diagnose_dedupe.py', 'scripts/diagnose_native_startup.py'):
+            text = (ROOT / name).read_text()
+            self.assertIn("if __name__ in {'__main__', '<run_path>'}:", text)
+            self.assertLess(text.index('exec(compile('), text.index('from public_ci_common import')
+                if name.startswith('ci/') else text.index('from verify_build_output_paths import'))
+
+
+    def test_direct_archive_without_existing_cache_does_not_create_one(self):
+        result = self.run_cli('archive')
+        self.assertEqual(0, result.returncode, result.stderr)
+        proof = json.loads(result.stdout)
+        self.assertIsNone(proof['source_commit'])
+        self.assertFalse(proof['public_release_receipt'])
+        self.assertFalse((self.root / 'scripts/__pycache__').exists())
+
 
 if __name__ == '__main__':
     unittest.main()
